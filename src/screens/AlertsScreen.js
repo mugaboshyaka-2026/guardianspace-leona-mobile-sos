@@ -1,0 +1,380 @@
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import {
+  View,
+  StyleSheet,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  SafeAreaView,
+  ActivityIndicator,
+} from 'react-native';
+import { colors, sevColors, typeIcons, spacing } from '../theme';
+import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
+import { fetchMyFavorites } from '../lib/api';
+import LeonaHeader from '../components/LeonaHeader';
+
+// Helper: "2d ago", "1w ago", etc.
+function getTimeSince(dateStr) {
+  try {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return `${days}d ago`;
+    const weeks = Math.floor(days / 7);
+    return `${weeks}w ago`;
+  } catch {
+    return '';
+  }
+}
+
+const AlertsScreen = ({ navigation }) => {
+  const [activeTab, setActiveTab] = useState('MY');
+
+  // ── Live API data ──
+  const { events: myAlerts, loading: myLoading } = useMyEvents();
+  const { events: worldEvents, loading: worldLoading } = useWorldEvents();
+  const globalEvents = useMemo(() => {
+    const myIds = new Set(myAlerts.map((e) => e.id));
+    return worldEvents.filter((e) => !myIds.has(e.id));
+  }, [myAlerts, worldEvents]);
+
+  // ── Favorites ──
+  const [favorites, setFavorites] = useState([]);
+  const [favLoading, setFavLoading] = useState(false);
+
+  const loadFavorites = useCallback(async () => {
+    setFavLoading(true);
+    try {
+      const data = await fetchMyFavorites();
+      setFavorites(data.favorites || []);
+    } catch (err) {
+      console.warn('[Alerts] Favorites fetch failed:', err.message);
+      setFavorites([]);
+    } finally {
+      setFavLoading(false);
+    }
+  }, []);
+
+  // Fetch favorites when the tab is selected
+  useEffect(() => {
+    if (activeTab === 'FAVORITES') loadFavorites();
+  }, [activeTab, loadFavorites]);
+
+  const currentEvents = activeTab === 'MY' ? myAlerts
+    : activeTab === 'GLOBAL' ? globalEvents
+    : []; // FAVORITES uses its own list
+
+  // Group by severity
+  const grouped = useMemo(() => {
+    const groups = [
+      { key: 'critical', title: 'CRITICAL', color: sevColors.critical, data: [] },
+      { key: 'high', title: 'HIGH', color: sevColors.high, data: [] },
+      { key: 'elevated', title: 'ELEVATED', color: sevColors.elevated, data: [] },
+      { key: 'monitoring', title: 'MONITORING', color: sevColors.monitoring, data: [] },
+    ];
+    currentEvents.forEach((e) => {
+      const g = groups.find((g) => g.key === e.severity);
+      if (g) g.data.push(e);
+    });
+    return groups.filter((g) => g.data.length > 0);
+  }, [currentEvents]);
+
+  const handleAlertPress = (event) => {
+    navigation.navigate('EventDetail', { event });
+  };
+
+  const getTimeAgo = (severity) => {
+    const times = { critical: '2m', high: '14m', elevated: '1h', monitoring: '3h' };
+    return times[severity] || '5m';
+  };
+
+  const renderAlertRow = (event) => (
+    <TouchableOpacity
+      key={event.id}
+      onPress={() => handleAlertPress(event)}
+      activeOpacity={0.6}
+      style={styles.alertRow}
+    >
+      <View style={[styles.iconContainer, { borderColor: sevColors[event.severity] || colors.border }]}>
+        <Text style={styles.iconEmoji}>{typeIcons[event.type] || '📍'}</Text>
+      </View>
+
+      <View style={styles.alertContent}>
+        <Text style={styles.alertTitle} numberOfLines={2}>{event.title}</Text>
+        <Text style={styles.alertLocation} numberOfLines={1}>{event.location}</Text>
+      </View>
+
+      <View style={styles.alertRight}>
+        <View style={[styles.severityPill, { backgroundColor: `${sevColors[event.severity]}20`, borderColor: sevColors[event.severity] }]}>
+          <Text style={[styles.severityPillText, { color: sevColors[event.severity] }]}>
+            {event.severity.toUpperCase()}
+          </Text>
+        </View>
+        <Text style={styles.alertTime}>{getTimeAgo(event.severity)}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <LeonaHeader
+        title="ALERTS"
+        right={
+          <View style={styles.totalBadge}>
+            <Text style={styles.totalBadgeText}>
+              {activeTab === 'FAVORITES' ? favorites.length : currentEvents.length}
+            </Text>
+          </View>
+        }
+      />
+
+      {/* Tab Bar: MY ALERTS / GLOBAL / ★ FAVORITES — equal thirds */}
+      <View style={styles.tabBar}>
+        <TouchableOpacity
+          style={[styles.tabButton, activeTab === 'MY' && styles.tabButtonActive]}
+          onPress={() => setActiveTab('MY')}
+        >
+          <Text style={[styles.tabLabel, activeTab === 'MY' && styles.tabLabelActive]}>MY ALERTS</Text>
+          {activeTab === 'MY' && <View style={styles.tabUnderline} />}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabButton, activeTab === 'GLOBAL' && styles.tabButtonActive]}
+          onPress={() => setActiveTab('GLOBAL')}
+        >
+          <Text style={[styles.tabLabel, activeTab === 'GLOBAL' && styles.tabLabelActive]}>GLOBAL</Text>
+          {activeTab === 'GLOBAL' && <View style={styles.tabUnderline} />}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabButton, activeTab === 'FAVORITES' && styles.tabButtonActive]}
+          onPress={() => setActiveTab('FAVORITES')}
+        >
+          <View style={styles.favTabInner}>
+            <Text style={[styles.favStar, activeTab === 'FAVORITES' && styles.favStarActive]}>★</Text>
+            <Text style={[styles.tabLabel, activeTab === 'FAVORITES' && styles.tabLabelActive]}>FAVORITES</Text>
+          </View>
+          {activeTab === 'FAVORITES' && <View style={styles.tabUnderline} />}
+        </TouchableOpacity>
+      </View>
+
+      {/* Alerts List (MY / GLOBAL) */}
+      {activeTab !== 'FAVORITES' && (
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {grouped.map((section) => (
+            <View key={section.key} style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionTitleRow}>
+                  <View style={[styles.sectionDot, { backgroundColor: section.color }]} />
+                  <Text style={[styles.sectionTitle, { color: section.color }]}>{section.title}</Text>
+                </View>
+                <View style={[styles.countBadge, { backgroundColor: `${section.color}20` }]}>
+                  <Text style={[styles.countBadgeText, { color: section.color }]}>{section.data.length}</Text>
+                </View>
+              </View>
+              <View style={styles.alertsList}>
+                {section.data.map((event) => renderAlertRow(event))}
+              </View>
+            </View>
+          ))}
+
+          {grouped.length === 0 && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No alerts in this category</Text>
+            </View>
+          )}
+
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
+      )}
+
+      {/* Favorites List */}
+      {activeTab === 'FAVORITES' && (
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {favLoading && (
+            <ActivityIndicator color={colors.blue} style={{ paddingVertical: 40 }} />
+          )}
+
+          {!favLoading && favorites.length > 0 && favorites.map((fav) => {
+            const event = fav.event_data || fav;
+            const savedDate = fav.created_at ? getTimeSince(fav.created_at) : '';
+            return (
+              <TouchableOpacity
+                key={fav.id || fav.event_id}
+                onPress={() => handleAlertPress(event)}
+                activeOpacity={0.6}
+                style={styles.favRow}
+              >
+                <View style={[styles.iconContainer, { borderColor: sevColors[event.severity] || colors.border }]}>
+                  <Text style={styles.iconEmoji}>{typeIcons[event.type] || '📍'}</Text>
+                </View>
+                <View style={styles.alertContent}>
+                  <Text style={styles.alertTitle} numberOfLines={2}>{event.title}</Text>
+                  <Text style={styles.favMeta}>{event.location}{savedDate ? ` · Saved ${savedDate}` : ''}</Text>
+                </View>
+                <View style={[styles.favSevDot, { backgroundColor: sevColors[event.severity] || colors.textDim }]} />
+              </TouchableOpacity>
+            );
+          })}
+
+          {!favLoading && favorites.length === 0 && (
+            <View style={styles.emptyState}>
+              <Text style={styles.favEmptyIcon}>★</Text>
+              <Text style={styles.emptyText}>No favorites yet</Text>
+              <Text style={styles.favHint}>Tap ★ on any event to save it here</Text>
+            </View>
+          )}
+
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
+      )}
+    </SafeAreaView>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+  },
+  headerTitle: { color: colors.text, fontSize: 18, fontWeight: '700', letterSpacing: 1 },
+  totalBadge: { backgroundColor: colors.blue, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: 12 },
+  totalBadgeText: { color: colors.white, fontSize: 12, fontWeight: '700' },
+
+  // Tab Bar
+  tabBar: {
+    flexDirection: 'row',
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    paddingHorizontal: spacing.lg,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  tabButtonActive: {},
+  tabLabel: { color: colors.textSec, fontSize: 12, fontWeight: '600', letterSpacing: 0.5 },
+  tabLabelActive: { color: colors.blue },
+  tabUnderline: {
+    position: 'absolute',
+    bottom: -1,
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: colors.blue,
+  },
+
+  scrollView: { flex: 1 },
+  scrollContent: { paddingBottom: spacing.xl },
+  section: { marginBottom: spacing.sm },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.panel,
+  },
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  sectionDot: { width: 8, height: 8, borderRadius: 4 },
+  sectionTitle: { fontSize: 12, fontWeight: '700', letterSpacing: 1 },
+  countBadge: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: 12 },
+  countBadgeText: { fontSize: 12, fontWeight: '700' },
+  alertsList: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, gap: spacing.sm },
+  alertRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.panelLight,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 10,
+    gap: spacing.md,
+  },
+  iconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.bg,
+    borderWidth: 1.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  iconEmoji: { fontSize: 18 },
+  alertContent: { flex: 1, gap: 2 },
+  alertTitle: { color: colors.text, fontSize: 13, fontWeight: '600' },
+  alertLocation: { color: colors.textSec, fontSize: 11 },
+  alertRight: { alignItems: 'flex-end', gap: spacing.xs, flexShrink: 0 },
+  severityPill: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: 4, borderWidth: 1 },
+  severityPillText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
+  alertTime: { color: colors.textDim, fontSize: 10, fontWeight: '500' },
+  emptyState: { paddingVertical: 60, alignItems: 'center', gap: 8 },
+  emptyText: { color: colors.textDim, fontSize: 13 },
+  bottomSpacer: { height: spacing.xl },
+
+  // Favorites tab inner (star + label)
+  favTabInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  favStar: {
+    color: colors.textDim,
+    fontSize: 14,
+  },
+  favStarActive: {
+    color: '#FFD700',
+  },
+
+  // Favorites row
+  favRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+  },
+  favMeta: {
+    color: colors.textSec,
+    fontSize: 11,
+  },
+  favSevDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    flexShrink: 0,
+  },
+  favEmptyIcon: {
+    fontSize: 36,
+    color: colors.textDim,
+    opacity: 0.3,
+  },
+  favHint: {
+    color: colors.textDim,
+    fontSize: 11,
+    marginTop: 4,
+  },
+});
+
+export default AlertsScreen;
