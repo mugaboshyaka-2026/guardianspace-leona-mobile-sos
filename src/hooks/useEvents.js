@@ -33,6 +33,18 @@ const cache = {
 const STALE_MS = 60_000; // 1 min
 const subscribedAoiIds = new Set();
 
+export function resetEventCache() {
+  cache.myEvents = null;
+  cache.worldEvents = null;
+  cache.alerts = null;
+  cache.aois = null;
+  cache.dataSources = null;
+  cache.profile = null;
+  cache.favorites = null;
+  cache.lastFetch = {};
+  subscribedAoiIds.clear();
+}
+
 function isStale(key) {
   const t = cache.lastFetch[key];
   return !t || Date.now() - t > STALE_MS;
@@ -150,12 +162,18 @@ export function useAlerts() {
 /**
  * useAOIs — returns user's Areas of Interest.
  */
-export function useAOIs() {
+export function useAOIs(enabled = true) {
   const [aois, setAois] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
+    if (!enabled) {
+      setAois([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -168,7 +186,7 @@ export function useAOIs() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,9 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { useAuth, useSignIn, useSignUp } from '@clerk/clerk-expo';
 import { colors, spacing } from '../theme';
 import { AppContext } from '../../App';
+import { addAOI, fetchMyAOIs } from '../lib/api';
+import { resetEventCache } from '../hooks/useEvents';
+import { getLocationCoordinates, getLocationMetadata } from '../lib/locality';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 const leonaBadge = require('../assets/leona-badge.png');
@@ -47,6 +50,16 @@ const PRODUCTS = [
   },
 ];
 
+const DEFAULT_AOI_SUGGESTIONS = [
+  'Los Angeles, CA',
+  'New York, US',
+  'London, UK',
+  'Johannesburg, South Africa',
+  'Dubai, UAE',
+  'Singapore',
+  'Sydney, Australia',
+];
+
 export default function OnboardingScreen() {
   const { handleOnboardingComplete } = useContext(AppContext);
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
@@ -65,9 +78,13 @@ export default function OnboardingScreen() {
   const [secondFactorStrategy, setSecondFactorStrategy] = useState(null);
   const [submittingAuth, setSubmittingAuth] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState('guardian_pro');
-  const [location, setLocation] = useState('Sydney, Australia');
+  const [location, setLocation] = useState('');
+  const [selectedAois, setSelectedAois] = useState([]);
+  const [existingAois, setExistingAois] = useState([]);
+  const [loadingExistingAois, setLoadingExistingAois] = useState(false);
   const [selectedRadius, setSelectedRadius] = useState(50);
   const [pulseAnim] = useState(new Animated.Value(1));
+  const [submittingSetup, setSubmittingSetup] = useState(false);
 
   useEffect(() => {
     if (step === 5) {
@@ -96,7 +113,58 @@ export default function OnboardingScreen() {
     }
   }, [authLoaded, isSignedIn, step]);
 
+  useEffect(() => {
+    if (authLoaded && isSignedIn && step === 0) {
+      setAuthMode('signin');
+      setStep(2);
+    }
+  }, [authLoaded, isSignedIn, step]);
+
+  useEffect(() => {
+    if (!authLoaded || !isSignedIn) {
+      setExistingAois([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadExistingAois = async () => {
+      setLoadingExistingAois(true);
+      try {
+        const data = await fetchMyAOIs();
+        if (cancelled) return;
+        const aois = (data.aois || []).map((aoi) => aoi.name || aoi.location_name || aoi.location || '').filter(Boolean);
+        setExistingAois(aois);
+      } catch {
+        if (!cancelled) {
+          setExistingAois([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingExistingAois(false);
+        }
+      }
+    };
+
+    loadExistingAois();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoaded, isSignedIn]);
+
+  useEffect(() => {
+    if (location.trim()) {
+      setSelectedAois((prev) => {
+        if (prev.length > 0) return prev;
+        return [location.trim()];
+      });
+    }
+  }, [location]);
+
   const productLabel = PRODUCTS.find((p) => p.id === selectedProduct)?.label || 'LEONA';
+  const allSuggestedAois = useMemo(() => {
+    const merged = [...selectedAois, ...existingAois, ...DEFAULT_AOI_SUGGESTIONS];
+    return Array.from(new Set(merged.map((item) => item.trim()).filter(Boolean)));
+  }, [existingAois, selectedAois]);
 
   const showClerkError = (error, fallbackMessage) => {
     const firstError = error?.errors?.[0];
@@ -388,19 +456,112 @@ export default function OnboardingScreen() {
 
   const handleGuestContinue = () => {
     setAuthMode('guest');
-    setEmail('guest@leona.ai');
+    setEmail('');
     setFullName('Guest User');
     setStep(2);
   };
 
-  const handleComplete = () => {
+  const toggleAoi = (value) => {
+    const normalized = value.trim();
+    if (!normalized) return;
+
+    setSelectedAois((prev) => (
+      prev.includes(normalized)
+        ? prev.filter((item) => item !== normalized)
+        : [...prev, normalized]
+    ));
+  };
+
+  const createAoiWithFallback = async (aoiName) => {
+    const coordinates = getLocationCoordinates(aoiName);
+    if (!coordinates) {
+      throw new Error(`AOI "${aoiName}" needs coordinates. Pick one of the suggested locations for now.`);
+    }
+    const metadata = getLocationMetadata(aoiName);
+    const payload = {
+      name: aoiName,
+      city: metadata.city,
+      country_code: metadata.country_code,
+      lat: coordinates.lat,
+      lng: coordinates.lng,
+      radius_km: selectedRadius,
+      is_primary: false,
+    };
+
+    console.log('[AOI_SETUP] Attempting AOI create', {
+      aoiName,
+      payload,
+    });
+    await addAOI(payload);
+    console.log('[AOI_SETUP] AOI create succeeded', {
+      aoiName,
+      payload,
+    });
+  };
+
+  const handleLocationNext = () => {
+    const normalizedLocation = location.trim();
+    if (normalizedLocation && !selectedAois.includes(normalizedLocation)) {
+      setSelectedAois((prev) => [...prev, normalizedLocation]);
+    }
+
+    if ((normalizedLocation ? [...selectedAois, normalizedLocation] : selectedAois).length === 0) {
+      Alert.alert('AOI required', 'Select at least one area of interest before continuing.');
+      return;
+    }
+
+    setStep(5);
+  };
+
+  const handleComplete = async () => {
+    if (selectedAois.length === 0) {
+      Alert.alert('AOI required', 'Select at least one area of interest before entering the app.');
+      return;
+    }
+
+    const normalizedAois = Array.from(new Set(selectedAois.map((item) => item.trim()).filter(Boolean)));
+
+    if (isSignedIn) {
+      const existingAoiSet = new Set(existingAois.map((item) => item.toLowerCase()));
+      const aoisToCreate = normalizedAois.filter((item) => !existingAoiSet.has(item.toLowerCase()));
+
+      if (aoisToCreate.length > 0) {
+        setSubmittingSetup(true);
+        try {
+          console.log('[AOI_SETUP] Starting AOI setup', {
+            selectedRadius,
+            aoisToCreate,
+          });
+          for (const aoiName of aoisToCreate) {
+            await createAoiWithFallback(aoiName);
+          }
+          resetEventCache();
+          setExistingAois((prev) => Array.from(new Set([...prev, ...aoisToCreate])));
+          console.log('[AOI_SETUP] AOI setup completed', {
+            aoisCreated: aoisToCreate,
+          });
+        } catch (error) {
+          console.error('[AOI_SETUP] AOI setup aborted', {
+            message: error?.message || 'Unknown error',
+            status: error?.status || null,
+          });
+          Alert.alert('AOI setup failed', error?.message || 'Unable to save your areas of interest.');
+          setSubmittingSetup(false);
+          return;
+        } finally {
+          setSubmittingSetup(false);
+        }
+      }
+    }
+
     handleOnboardingComplete({
       authMode,
       email,
       fullName,
       organization,
       product: selectedProduct,
-      location,
+      location: normalizedAois[0] || location,
+      aois: normalizedAois,
       radius: selectedRadius,
     });
   };
@@ -456,13 +617,17 @@ export default function OnboardingScreen() {
         />
       )}
       {step === 3 && (
-        <StepLocation
+        <StepAoiSetup
           location={location}
           setLocation={setLocation}
+          selectedAois={selectedAois}
+          toggleAoi={toggleAoi}
+          suggestions={allSuggestedAois}
+          existingAois={existingAois}
           selectedRadius={selectedRadius}
           setSelectedRadius={setSelectedRadius}
-          onNext={() => setStep(5)}
-          onSkip={() => setStep(5)}
+          onNext={handleLocationNext}
+          loadingExistingAois={loadingExistingAois}
         />
       )}
       {step === 4 && (
@@ -487,10 +652,12 @@ export default function OnboardingScreen() {
         <StepReady
           location={location}
           radius={selectedRadius}
+          aois={selectedAois}
           product={selectedProduct}
           productLabel={productLabel}
           onComplete={handleComplete}
           pulseAnim={pulseAnim}
+          submitting={submittingSetup}
         />
       )}
     </View>
@@ -758,38 +925,63 @@ const StepProductSelect = ({ selectedProduct, setSelectedProduct, onNext }) => (
   </ScrollView>
 );
 
-const StepLocation = ({ location, setLocation, selectedRadius, setSelectedRadius, onNext, onSkip }) => (
+const StepAoiSetup = ({
+  location,
+  setLocation,
+  selectedAois,
+  toggleAoi,
+  suggestions,
+  existingAois,
+  selectedRadius,
+  setSelectedRadius,
+  onNext,
+  loadingExistingAois,
+}) => (
   <ScrollView contentContainerStyle={styles.stepContainer}>
     <ProgressBar count={3} filled={2} />
 
-    <Text style={styles.stepTitle}>Where are you based?</Text>
-    <Text style={styles.stepSubtitle}>LEONA will prioritise intelligence and alerts for this area</Text>
+    <Text style={styles.stepTitle}>Set your AOIs</Text>
+    <Text style={styles.stepSubtitle}>Choose the places LEONA should monitor first. This setup is written to your account, not just the device.</Text>
 
     <View style={styles.searchContainer}>
       <TextInput
         style={styles.searchInput}
-        placeholder="Enter city or region"
+        placeholder="Add city, region, or country"
         placeholderTextColor={colors.textDim}
         value={location}
         onChangeText={setLocation}
       />
     </View>
 
+    <TouchableOpacity style={styles.buttonOutline} onPress={() => toggleAoi(location)}>
+      <Text style={styles.buttonTextOutline}>ADD AOI</Text>
+    </TouchableOpacity>
+
+    <Text style={styles.helperText}>Use one of the suggested locations for now. Custom geocoding is not wired yet on mobile.</Text>
+
     <View style={styles.locationSuggestions}>
-      {['Sydney, Australia', 'London, UK', 'New York, US', 'Dubai, UAE', 'Singapore'].map((loc) => (
+      {suggestions.map((loc) => (
         <TouchableOpacity
           key={loc}
-          style={[styles.locationChip, location === loc && styles.locationChipSelected]}
-          onPress={() => setLocation(loc)}
+          style={[styles.locationChip, selectedAois.includes(loc) && styles.locationChipSelected]}
+          onPress={() => toggleAoi(loc)}
         >
-          <Text style={[styles.locationChipText, location === loc && styles.locationChipTextSelected]}>{loc}</Text>
+          <Text style={[styles.locationChipText, selectedAois.includes(loc) && styles.locationChipTextSelected]}>{loc}</Text>
         </TouchableOpacity>
       ))}
     </View>
 
+    <View style={styles.summaryCard}>
+      <SummaryRow label="Selected AOIs" value={selectedAois.length ? `${selectedAois.length}` : 'None'} />
+      <View style={styles.summaryDivider} />
+      <SummaryRow label="Existing AOIs" value={loadingExistingAois ? 'Loading...' : `${existingAois.length}`} />
+    </View>
+
     <View style={styles.mapPreview}>
       <View style={styles.mapPlaceholder}>
-        <Text style={styles.mapText}>{location || 'Select a location'}</Text>
+        <Text style={styles.mapText}>
+          {selectedAois.length > 0 ? selectedAois.join(' • ') : 'Select at least one AOI'}
+        </Text>
       </View>
     </View>
 
@@ -811,14 +1003,10 @@ const StepLocation = ({ location, setLocation, selectedRadius, setSelectedRadius
     <TouchableOpacity style={styles.buttonPrimary} onPress={onNext}>
       <Text style={styles.buttonTextPrimary}>NEXT -></Text>
     </TouchableOpacity>
-
-    <TouchableOpacity onPress={onSkip}>
-      <Text style={styles.linkText}>Skip for now</Text>
-    </TouchableOpacity>
   </ScrollView>
 );
 
-const StepReady = ({ location, radius, product, productLabel, onComplete, pulseAnim }) => {
+const StepReady = ({ location, radius, aois, product, productLabel, onComplete, pulseAnim, submitting }) => {
   const productData = PRODUCTS.find((p) => p.id === product);
 
   return (
@@ -831,21 +1019,25 @@ const StepReady = ({ location, radius, product, productLabel, onComplete, pulseA
 
       <Text style={styles.stepTitle}>LEONA is configured.</Text>
       <Text style={styles.stepSubtitle}>
-        I am now monitoring {location || 'your area'} across all active event categories in real time.
+        I am now monitoring {(aois && aois[0]) || location || 'your area'} across all active event categories in real time.
       </Text>
 
       <View style={styles.summaryCard}>
         <SummaryRow label="Product" value={productLabel} color={productData?.accent} />
         <View style={styles.summaryDivider} />
-        <SummaryRow label="Location" value={location || 'Not set'} />
+        <SummaryRow label="Primary AOI" value={(aois && aois[0]) || location || 'Not set'} />
+        <View style={styles.summaryDivider} />
+        <SummaryRow label="AOIs" value={`${aois?.length || 0}`} />
         <View style={styles.summaryDivider} />
         <SummaryRow label="Radius" value={`${radius}km`} />
         <View style={styles.summaryDivider} />
         <SummaryRow label="Monitoring" value="Live intelligence" />
       </View>
 
-      <TouchableOpacity style={styles.buttonPrimary} onPress={onComplete}>
-        <Text style={styles.buttonTextPrimary}>ENTER {productLabel.toUpperCase()} -></Text>
+      <TouchableOpacity style={styles.buttonPrimary} onPress={onComplete} disabled={submitting}>
+        <Text style={styles.buttonTextPrimary}>
+          {submitting ? 'SAVING AOIS...' : `ENTER ${productLabel.toUpperCase()} ->`}
+        </Text>
       </TouchableOpacity>
 
       <Text style={styles.footerText}>You can change these anytime in Settings</Text>
@@ -1016,6 +1208,12 @@ const styles = StyleSheet.create({
     color: colors.blue,
     textAlign: 'center',
     marginBottom: spacing.xl,
+  },
+  helperText: {
+    fontSize: 12,
+    color: colors.textDim,
+    marginBottom: spacing.lg,
+    lineHeight: 18,
   },
   faceIDBtn: {
     flexDirection: 'row',

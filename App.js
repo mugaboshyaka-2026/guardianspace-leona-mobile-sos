@@ -7,6 +7,7 @@ import { AppNavigator } from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import { AuthProvider, useAuth } from './src/lib/auth';
 import { colors } from './src/theme';
+import { useAOIs, resetEventCache } from './src/hooks/useEvents';
 
 // App context for onboarding completion
 export const AppContext = createContext();
@@ -21,6 +22,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    resetEventCache();
     setUserConfig(null);
     setOnboardingComplete(false);
   };
@@ -36,16 +38,18 @@ export default function App() {
 
 function AppShell({ onboardingComplete }) {
   const { isLoaded, isSignedIn } = useAuth();
+  const { aois, loading: aoisLoading } = useAOIs(isSignedIn);
 
   useEffect(() => {
     // no-op effect keeps auth state reactive for restored Clerk sessions
   }, [isLoaded, isSignedIn]);
 
-  if (!isLoaded) {
+  if (!isLoaded || (isSignedIn && aoisLoading)) {
     return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
   }
 
-  const showApp = onboardingComplete || isSignedIn;
+  const hasConfiguredAois = aois.length > 0;
+  const showApp = onboardingComplete || (isSignedIn && hasConfiguredAois);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

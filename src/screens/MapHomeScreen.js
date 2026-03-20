@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useRef, useState, useMemo, useCallback, useEffect, useContext } from 'react';
 import {
   View,
   StyleSheet,
@@ -12,6 +12,8 @@ import {
 import BottomSheet from '@gorhom/bottom-sheet';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
+import { AppContext } from '../../App';
+import { deriveLocalEvents, deriveLocalRegion } from '../lib/locality';
 
 const mapsModule = Platform.OS === 'web'
   ? {
@@ -23,7 +25,7 @@ const mapsModule = Platform.OS === 'web'
 const MapView = mapsModule.default;
 const Marker = mapsModule.Marker;
 
-const LOCAL_REGION = { latitude: 51.5, longitude: -0.12, latitudeDelta: 8, longitudeDelta: 8 };
+const LOCAL_REGION = { latitude: -33.8688, longitude: 151.2093, latitudeDelta: 8, longitudeDelta: 8 };
 const GLOBAL_REGION = { latitude: 25, longitude: 10, latitudeDelta: 80, longitudeDelta: 80 };
 
 const layers = [
@@ -38,6 +40,7 @@ const layers = [
 ];
 
 const MapHomeScreen = ({ navigation }) => {
+  const { userConfig } = useContext(AppContext);
   const mapRef = useRef(null);
   const bottomSheetRef = useRef(null);
   const [is3D, setIs3D] = useState(false);
@@ -60,30 +63,43 @@ const MapHomeScreen = ({ navigation }) => {
 
   const { events: myEvents } = useMyEvents();
   const { events: worldEvents } = useWorldEvents();
+  const localEvents = useMemo(
+    () => deriveLocalEvents(myEvents, worldEvents, userConfig?.location),
+    [myEvents, userConfig?.location, worldEvents]
+  );
+  const localRegion = useMemo(
+    () => deriveLocalRegion(userConfig?.location, localEvents) || LOCAL_REGION,
+    [localEvents, userConfig?.location]
+  );
 
   const allEvents = useMemo(() => {
     const deduped = new Map();
-    [...myEvents, ...worldEvents].forEach((event) => deduped.set(event.id, event));
+    [...localEvents, ...worldEvents].forEach((event) => deduped.set(event.id, event));
     return Array.from(deduped.values());
-  }, [myEvents, worldEvents]);
+  }, [localEvents, worldEvents]);
 
   const filteredEvents = useMemo(() => {
-    if (activeTab === 'MY_ALERTS') return myEvents;
+    if (activeTab === 'MY_ALERTS') return localEvents;
     if (activeTab === 'EVENTS') return worldEvents;
     if (activeTab === 'NEWS') return allEvents.slice(0, 5);
     if (activeTab === 'COMMUNITY') return allEvents.slice(0, 3);
     return allEvents;
-  }, [activeTab, myEvents, worldEvents, allEvents]);
+  }, [activeTab, localEvents, worldEvents, allEvents]);
+
+  const scopedEvents = useMemo(
+    () => (mapScope === 'LOCAL' ? localEvents : allEvents),
+    [allEvents, localEvents, mapScope]
+  );
 
   const visibleEvents = useMemo(
-    () => allEvents.filter((event) => layerStates[event.type] !== false),
-    [allEvents, layerStates]
+    () => scopedEvents.filter((event) => layerStates[event.type] !== false),
+    [scopedEvents, layerStates]
   );
 
   useEffect(() => {
-    const region = mapScope === 'LOCAL' ? LOCAL_REGION : GLOBAL_REGION;
+    const region = mapScope === 'LOCAL' ? localRegion : GLOBAL_REGION;
     mapRef.current?.animateToRegion?.(region, 600);
-  }, [mapScope]);
+  }, [localRegion, mapScope]);
 
   const handleMarkerPress = (event) => navigation.navigate('EventDetail', { event });
   const handleCardPress = (event) => navigation.navigate('EventDetail', { event });
@@ -129,8 +145,8 @@ const MapHomeScreen = ({ navigation }) => {
   }, []);
 
   const handleMyLocation = useCallback(() => {
-    mapRef.current?.animateToRegion?.(LOCAL_REGION, 500);
-  }, []);
+    mapRef.current?.animateToRegion?.(localRegion, 500);
+  }, [localRegion]);
 
   const handleFitAll = useCallback(() => {
     mapRef.current?.animateToRegion?.(GLOBAL_REGION, 500);
