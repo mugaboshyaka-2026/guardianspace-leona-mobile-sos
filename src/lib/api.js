@@ -30,14 +30,27 @@ async function request(path, options = {}) {
 
   // Build headers
   const headers = { 'Content-Type': 'application/json' };
+  let hasAuthHeader = false;
+  let token = null;
   if (_getToken) {
     try {
-      const token = await _getToken();
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      token = await _getToken();
     } catch (e) {
       console.warn('[LEONA API] Token fetch failed:', e.message);
     }
   }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+    hasAuthHeader = true;
+  }
+
+  console.log('[LEONA API] Request', {
+    method,
+    url,
+    hasAuthHeader,
+    hasBody: !!body,
+    params: params || null,
+  });
 
   // Fetch with timeout
   const controller = new AbortController();
@@ -52,8 +65,21 @@ async function request(path, options = {}) {
     });
     clearTimeout(timer);
 
+    console.log('[LEONA API] Response', {
+      method,
+      url,
+      status: res.status,
+      ok: res.ok,
+    });
+
     if (!res.ok) {
       const errorBody = await res.text().catch(() => '');
+      console.warn('[LEONA API] Error body', {
+        method,
+        url,
+        status: res.status,
+        body: errorBody,
+      });
       const err = new Error(`API ${res.status}: ${errorBody}`);
       err.status = res.status;
       throw err;

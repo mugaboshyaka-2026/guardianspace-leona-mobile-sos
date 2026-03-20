@@ -5,152 +5,147 @@ import {
   Text,
   TouchableOpacity,
   TextInput,
-  Dimensions,
-  Alert,
   ScrollView,
   Switch,
-  ActivityIndicator,
+  Platform,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
 import BottomSheet from '@gorhom/bottom-sheet';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const mapsModule = Platform.OS === 'web'
+  ? {
+      default: React.forwardRef(({ children, style }, _ref) => <View style={style}>{children}</View>),
+      Marker: ({ children }) => <View>{children}</View>,
+    }
+  : require('react-native-maps');
+
+const MapView = mapsModule.default;
+const Marker = mapsModule.Marker;
+
+const LOCAL_REGION = { latitude: 51.5, longitude: -0.12, latitudeDelta: 8, longitudeDelta: 8 };
+const GLOBAL_REGION = { latitude: 25, longitude: 10, latitudeDelta: 80, longitudeDelta: 80 };
+
+const layers = [
+  { key: 'wildfire', label: 'Wildfires', icon: 'F' },
+  { key: 'flood', label: 'Floods', icon: 'W' },
+  { key: 'earthquake', label: 'Earthquakes', icon: 'Q' },
+  { key: 'hurricane', label: 'Storms & Cyclones', icon: 'S' },
+  { key: 'conflict', label: 'Conflict Zones', icon: 'C' },
+  { key: 'drought', label: 'Drought & Heat', icon: 'D' },
+  { key: 'volcano', label: 'Volcanic Activity', icon: 'V' },
+  { key: 'health', label: 'Health & Disease', icon: 'H' },
+];
 
 const MapHomeScreen = ({ navigation }) => {
   const mapRef = useRef(null);
   const bottomSheetRef = useRef(null);
-  const [is3D, setIs3D] = useState(false);   // default: 2D flat view
+  const [is3D, setIs3D] = useState(false);
   const [mapScope, setMapScope] = useState('LOCAL');
   const [activeTab, setActiveTab] = useState('MY_ALERTS');
   const [layersVisible, setLayersVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [layerStates, setLayerStates] = useState({
-    wildfire: true, flood: true, earthquake: true, hurricane: true,
-    conflict: true, drought: false, volcano: false, health: false,
+    wildfire: true,
+    flood: true,
+    earthquake: true,
+    hurricane: true,
+    conflict: true,
+    drought: false,
+    volcano: false,
+    health: false,
   });
   const snapPoints = useMemo(() => [100, 300, 520], []);
 
-  // ── Live API data ──
-  const { events: myEvents, loading: myLoading, refresh: refreshMy } = useMyEvents();
-  const { events: worldEvents, loading: worldLoading, refresh: refreshWorld } = useWorldEvents();
+  const { events: myEvents } = useMyEvents();
+  const { events: worldEvents } = useWorldEvents();
 
-  // Merge & dedupe all events for the map
   const allEvents = useMemo(() => {
-    const map = new Map();
-    [...myEvents, ...worldEvents].forEach((e) => map.set(e.id, e));
-    return Array.from(map.values());
+    const deduped = new Map();
+    [...myEvents, ...worldEvents].forEach((event) => deduped.set(event.id, event));
+    return Array.from(deduped.values());
   }, [myEvents, worldEvents]);
 
-  const handleMarkerPress = (event) => {
-    navigation.navigate('EventDetail', { event });
-  };
-
-  const handleCardPress = (event) => {
-    navigation.navigate('EventDetail', { event });
-  };
-
   const filteredEvents = useMemo(() => {
-    if (activeTab === 'MY_ALERTS') {
-      return myEvents;
-    }
-    if (activeTab === 'EVENTS') {
-      return worldEvents;
-    }
+    if (activeTab === 'MY_ALERTS') return myEvents;
+    if (activeTab === 'EVENTS') return worldEvents;
     if (activeTab === 'NEWS') return allEvents.slice(0, 5);
     if (activeTab === 'COMMUNITY') return allEvents.slice(0, 3);
     return allEvents;
   }, [activeTab, myEvents, worldEvents, allEvents]);
 
-  const toggleLayer = (key) => {
-    setLayerStates(prev => ({ ...prev, [key]: !prev[key] }));
-  };
+  const visibleEvents = useMemo(
+    () => allEvents.filter((event) => layerStates[event.type] !== false),
+    [allEvents, layerStates]
+  );
 
-  const visibleEvents = useMemo(() => {
-    return allEvents.filter(e => layerStates[e.type] !== false);
-  }, [layerStates, allEvents]);
+  useEffect(() => {
+    const region = mapScope === 'LOCAL' ? LOCAL_REGION : GLOBAL_REGION;
+    mapRef.current?.animateToRegion?.(region, 600);
+  }, [mapScope]);
+
+  const handleMarkerPress = (event) => navigation.navigate('EventDetail', { event });
+  const handleCardPress = (event) => navigation.navigate('EventDetail', { event });
+  const toggleLayer = (key) => setLayerStates((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const handleZoomIn = useCallback(() => {
-    mapRef.current?.getCamera().then((cam) => {
-      mapRef.current?.animateCamera({
-        ...cam,
-        altitude: cam.altitude ? cam.altitude * 0.5 : undefined,
-        zoom: cam.zoom ? cam.zoom + 1 : undefined,
-      }, { duration: 300 });
+    mapRef.current?.getCamera?.().then((cam) => {
+      mapRef.current?.animateCamera?.(
+        {
+          ...cam,
+          altitude: cam.altitude ? cam.altitude * 0.5 : undefined,
+          zoom: cam.zoom ? cam.zoom + 1 : undefined,
+        },
+        { duration: 300 }
+      );
     });
   }, []);
 
   const handleZoomOut = useCallback(() => {
-    mapRef.current?.getCamera().then((cam) => {
-      mapRef.current?.animateCamera({
-        ...cam,
-        altitude: cam.altitude ? cam.altitude * 2 : undefined,
-        zoom: cam.zoom ? cam.zoom - 1 : undefined,
-      }, { duration: 300 });
+    mapRef.current?.getCamera?.().then((cam) => {
+      mapRef.current?.animateCamera?.(
+        {
+          ...cam,
+          altitude: cam.altitude ? cam.altitude * 2 : undefined,
+          zoom: cam.zoom ? cam.zoom - 1 : undefined,
+        },
+        { duration: 300 }
+      );
     });
   }, []);
 
   const handleResetNorth = useCallback(() => {
-    mapRef.current?.getCamera().then((cam) => {
-      mapRef.current?.animateCamera({
-        ...cam,
-        heading: 0,
-        pitch: 0,
-      }, { duration: 400 });
+    mapRef.current?.getCamera?.().then((cam) => {
+      mapRef.current?.animateCamera?.(
+        {
+          ...cam,
+          heading: 0,
+          pitch: 0,
+        },
+        { duration: 400 }
+      );
     });
   }, []);
 
-  // LOCAL region: UK/Europe country level · GLOBAL: world overview
-  const LOCAL_REGION = { latitude: 51.5, longitude: -0.12, latitudeDelta: 8, longitudeDelta: 8 };
-  const GLOBAL_REGION = { latitude: 25, longitude: 10, latitudeDelta: 80, longitudeDelta: 80 };
-
-  // Animate map when scope toggle changes
-  useEffect(() => {
-    const region = mapScope === 'LOCAL' ? LOCAL_REGION : GLOBAL_REGION;
-    mapRef.current?.animateToRegion(region, 600);
-  }, [mapScope]);
-
-  const handleScopeToggle = useCallback((scope) => {
-    setMapScope(scope);
-  }, []);
-
   const handleMyLocation = useCallback(() => {
-    mapRef.current?.animateToRegion(LOCAL_REGION, 500);
+    mapRef.current?.animateToRegion?.(LOCAL_REGION, 500);
   }, []);
 
   const handleFitAll = useCallback(() => {
-    mapRef.current?.animateToRegion(GLOBAL_REGION, 500);
+    mapRef.current?.animateToRegion?.(GLOBAL_REGION, 500);
   }, []);
-
-  const layers = [
-    { key: 'wildfire', label: 'Wildfires', icon: '🔥' },
-    { key: 'flood', label: 'Floods', icon: '🌊' },
-    { key: 'earthquake', label: 'Earthquakes', icon: '⚡' },
-    { key: 'hurricane', label: 'Storms & Cyclones', icon: '🌀' },
-    { key: 'conflict', label: 'Conflict Zones', icon: '⚔️' },
-    { key: 'drought', label: 'Drought & Heat', icon: '☀️' },
-    { key: 'volcano', label: 'Volcanic Activity', icon: '🌋' },
-    { key: 'health', label: 'Health & Disease', icon: '🦠' },
-  ];
 
   return (
     <View style={styles.container}>
-      {/* Map — Apple Maps (no API key needed) */}
       <MapView
         ref={mapRef}
         style={styles.map}
-        mapType={is3D ? 'hybridFlyover' : 'mutedStandard'}
-        userInterfaceStyle="dark"
-        initialRegion={{
-          latitude: 51.5,
-          longitude: -0.12,
-          latitudeDelta: 8,
-          longitudeDelta: 8,
-        }}
-        pitchEnabled={is3D}
-        rotateEnabled={true}
+        mapType={Platform.OS === 'web' ? undefined : is3D ? 'hybridFlyover' : 'mutedStandard'}
+        userInterfaceStyle={Platform.OS === 'web' ? undefined : 'dark'}
+        initialRegion={LOCAL_REGION}
+        pitchEnabled={Platform.OS !== 'web' && is3D}
+        rotateEnabled={Platform.OS !== 'web'}
         showsCompass={false}
         showsScale={false}
         showsUserLocation={false}
@@ -162,17 +157,21 @@ const MapHomeScreen = ({ navigation }) => {
             onPress={() => handleMarkerPress(event)}
           >
             <View style={[styles.marker, { borderColor: sevColors[event.severity] || '#888' }]}>
-              <Text style={styles.markerEmoji}>{typeIcons[event.type] || '📍'}</Text>
+              <Text style={styles.markerEmoji}>{typeIcons[event.type] || 'o'}</Text>
             </View>
           </Marker>
         ))}
+        {Platform.OS === 'web' ? (
+          <View style={styles.webMapOverlay}>
+            <Text style={styles.webMapTitle}>Web fallback</Text>
+            <Text style={styles.webMapSubtitle}>Mobile keeps native maps.</Text>
+          </View>
+        ) : null}
       </MapView>
 
-      {/* ===== TOP BAR ===== */}
       <View style={styles.topBar}>
-        {/* Row 1: Search bar — full width */}
         <View style={[styles.searchBar, searchFocused && styles.searchBarFocused]}>
-          <Text style={styles.searchIcon}>⌕</Text>
+          <Text style={styles.searchIcon}>O</Text>
           <TextInput
             style={styles.searchInput}
             placeholder="Find address or place"
@@ -182,14 +181,13 @@ const MapHomeScreen = ({ navigation }) => {
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
           />
-          {searchText.length > 0 && (
+          {searchText.length > 0 ? (
             <TouchableOpacity onPress={() => setSearchText('')}>
-              <Text style={styles.clearBtn}>✕</Text>
+              <Text style={styles.clearBtn}>X</Text>
             </TouchableOpacity>
-          )}
+          ) : null}
         </View>
 
-        {/* Row 2: LIVE pill · LOCAL/GLOBAL */}
         <View style={styles.topBarRow2}>
           <View style={styles.livePill}>
             <View style={styles.liveDotSmall} />
@@ -198,13 +196,13 @@ const MapHomeScreen = ({ navigation }) => {
           <View style={styles.scopeToggle}>
             <TouchableOpacity
               style={[styles.scopeBtn, mapScope === 'LOCAL' && styles.scopeBtnActive]}
-              onPress={() => handleScopeToggle('LOCAL')}
+              onPress={() => setMapScope('LOCAL')}
             >
               <Text style={[styles.scopeBtnText, mapScope === 'LOCAL' && styles.scopeBtnTextActive]}>LOCAL</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.scopeBtn, mapScope === 'GLOBAL' && styles.scopeBtnActive]}
-              onPress={() => handleScopeToggle('GLOBAL')}
+              onPress={() => setMapScope('GLOBAL')}
             >
               <Text style={[styles.scopeBtnText, mapScope === 'GLOBAL' && styles.scopeBtnTextActive]}>GLOBAL</Text>
             </TouchableOpacity>
@@ -212,20 +210,16 @@ const MapHomeScreen = ({ navigation }) => {
         </View>
       </View>
 
-      {/* ===== LEFT TOOL COLUMN — top-anchored, left side (GIS style) ===== */}
       <View style={styles.mapToolCol}>
-        {/* Zoom In */}
         <TouchableOpacity style={styles.mapToolBtn} onPress={handleZoomIn}>
           <Text style={styles.mapToolBtnText}>+</Text>
         </TouchableOpacity>
-        {/* Zoom Out */}
         <TouchableOpacity style={styles.mapToolBtn} onPress={handleZoomOut}>
-          <Text style={styles.mapToolBtnText}>−</Text>
+          <Text style={styles.mapToolBtnText}>-</Text>
         </TouchableOpacity>
 
         <View style={styles.mapToolDivider} />
 
-        {/* Fit All / Extent */}
         <TouchableOpacity style={styles.mapToolBtn} onPress={handleFitAll}>
           <View style={styles.extentIcon}>
             <View style={styles.extentCornerTL} />
@@ -237,10 +231,9 @@ const MapHomeScreen = ({ navigation }) => {
 
         <View style={styles.mapToolDivider} />
 
-        {/* Layers */}
         <TouchableOpacity
           style={[styles.mapToolBtn, layersVisible && styles.mapToolBtnActive]}
-          onPress={() => setLayersVisible(!layersVisible)}
+          onPress={() => setLayersVisible((prev) => !prev)}
         >
           <View style={styles.layerIconStack}>
             <View style={[styles.layerLine, layersVisible && { backgroundColor: colors.blue }]} />
@@ -249,23 +242,15 @@ const MapHomeScreen = ({ navigation }) => {
           </View>
         </TouchableOpacity>
 
-        {/* My Location / Home */}
         <TouchableOpacity style={styles.mapToolBtn} onPress={handleMyLocation}>
-          <Text style={styles.mapToolIcon}>⌂</Text>
+          <Text style={styles.mapToolIcon}>H</Text>
         </TouchableOpacity>
 
-        {/* Basemap / Globe */}
         <TouchableOpacity style={styles.mapToolBtn} onPress={handleResetNorth}>
-          <Text style={styles.mapToolIconLg}>🌐</Text>
-        </TouchableOpacity>
-
-        {/* Time / History */}
-        <TouchableOpacity style={styles.mapToolBtn}>
-          <Text style={styles.mapToolIcon}>⏱</Text>
+          <Text style={styles.mapToolIconLg}>G</Text>
         </TouchableOpacity>
       </View>
 
-      {/* ===== 2D / 3D toggle — bottom-left, vertical, above bottom sheet ===== */}
       <View style={styles.viewToggle}>
         <TouchableOpacity
           style={[styles.viewButton, !is3D && styles.viewButtonActive]}
@@ -282,13 +267,12 @@ const MapHomeScreen = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
-      {/* ===== LAYERS PANEL (slides from left, not middle) ===== */}
-      {layersVisible && (
+      {layersVisible ? (
         <View style={styles.layersPanel}>
           <View style={styles.layersPanelHeader}>
             <Text style={styles.layersPanelTitle}>MAP LAYERS</Text>
             <TouchableOpacity onPress={() => setLayersVisible(false)}>
-              <Text style={styles.layersPanelClose}>✕</Text>
+              <Text style={styles.layersPanelClose}>X</Text>
             </TouchableOpacity>
           </View>
 
@@ -314,31 +298,9 @@ const MapHomeScreen = ({ navigation }) => {
               </View>
             ))}
           </ScrollView>
-
-          {/* Map Type selector */}
-          <View style={styles.mapTypeSection}>
-            <Text style={styles.mapTypeSectionTitle}>MAP TYPE</Text>
-            <View style={styles.mapTypeRow}>
-              {[
-                { label: 'Dark', type: false },
-                { label: 'Satellite', type: true },
-              ].map((item) => (
-                <TouchableOpacity
-                  key={item.label}
-                  style={[styles.mapTypeBtn, is3D === item.type && styles.mapTypeBtnActive]}
-                  onPress={() => setIs3D(item.type)}
-                >
-                  <Text style={[styles.mapTypeBtnText, is3D === item.type && styles.mapTypeBtnTextActive]}>
-                    {item.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
         </View>
-      )}
+      ) : null}
 
-      {/* Bottom Sheet */}
       <BottomSheet
         ref={bottomSheetRef}
         snapPoints={snapPoints}
@@ -374,7 +336,7 @@ const MapHomeScreen = ({ navigation }) => {
                   style={styles.card}
                 >
                   <View style={styles.cardIcon}>
-                    <Text style={styles.cardIconText}>{typeIcons[event.type] || '📍'}</Text>
+                    <Text style={styles.cardIconText}>{typeIcons[event.type] || 'o'}</Text>
                   </View>
                   <View style={styles.cardContent}>
                     <View style={styles.cardHeader}>
@@ -397,13 +359,30 @@ const MapHomeScreen = ({ navigation }) => {
 
 const TB = 'rgba(255,255,255,0.92)';
 const TB_BORDER = 'rgba(0,0,0,0.08)';
-const TB_SHADOW = { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3 };
+const TB_SHADOW = {
+  shadowColor: '#000',
+  shadowOpacity: 0.12,
+  shadowRadius: 4,
+  shadowOffset: { width: 0, height: 2 },
+  elevation: 3,
+};
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   map: { flex: 1 },
-
-  // ===== TOP BAR =====
+  webMapOverlay: {
+    position: 'absolute',
+    top: 120,
+    left: spacing.lg,
+    right: spacing.lg,
+    padding: spacing.lg,
+    backgroundColor: 'rgba(4,6,15,0.8)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  webMapTitle: { color: colors.text, fontSize: 16, fontWeight: '700', marginBottom: spacing.sm },
+  webMapSubtitle: { color: colors.textSec, fontSize: 12 },
   topBar: {
     position: 'absolute',
     top: 56,
@@ -430,7 +409,9 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,59,59,0.3)',
   },
   liveDotSmall: {
-    width: 6, height: 6, borderRadius: 3,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: '#FF3B3B',
   },
   livePillText: {
@@ -469,7 +450,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     paddingHorizontal: 4,
   },
-  // LOCAL/GLOBAL scope toggle
   scopeToggle: {
     backgroundColor: TB,
     borderRadius: 6,
@@ -488,8 +468,6 @@ const styles = StyleSheet.create({
   scopeBtnActive: { backgroundColor: '#1a1a2e' },
   scopeBtnText: { color: '#666', fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
   scopeBtnTextActive: { color: colors.blue },
-
-  // 2D/3D toggle — bottom-left, vertical, just above collapsed bottom sheet
   viewToggle: {
     position: 'absolute',
     left: spacing.sm,
@@ -515,8 +493,6 @@ const styles = StyleSheet.create({
   viewButtonText: { color: '#555', fontSize: 12, fontWeight: '700' },
   viewBtnTextActive: { color: '#fff' },
   viewToggleDivider: { width: 26, height: 1, backgroundColor: 'rgba(0,0,0,0.1)', marginVertical: 2 },
-
-  // ===== LEFT TOOL COLUMN — top-anchored, GIS style =====
   mapToolCol: {
     position: 'absolute',
     left: spacing.sm,
@@ -539,21 +515,15 @@ const styles = StyleSheet.create({
   mapToolBtnActive: { backgroundColor: `${colors.blue}18` },
   mapToolBtnText: { color: '#333', fontSize: 22, fontWeight: '300' },
   mapToolIcon: { color: '#444', fontSize: 18 },
-  mapToolIconLg: { fontSize: 18 },
+  mapToolIconLg: { color: '#444', fontSize: 18 },
   mapToolDivider: { width: 26, height: 1, backgroundColor: 'rgba(0,0,0,0.1)', marginVertical: 2 },
-
-  // Extent icon (4 corner brackets)
   extentIcon: { width: 18, height: 18, position: 'relative' },
   extentCornerTL: { position: 'absolute', top: 0, left: 0, width: 6, height: 6, borderTopWidth: 2, borderLeftWidth: 2, borderColor: '#555' },
   extentCornerTR: { position: 'absolute', top: 0, right: 0, width: 6, height: 6, borderTopWidth: 2, borderRightWidth: 2, borderColor: '#555' },
   extentCornerBL: { position: 'absolute', bottom: 0, left: 0, width: 6, height: 6, borderBottomWidth: 2, borderLeftWidth: 2, borderColor: '#555' },
   extentCornerBR: { position: 'absolute', bottom: 0, right: 0, width: 6, height: 6, borderBottomWidth: 2, borderRightWidth: 2, borderColor: '#555' },
-
-  // Layer icon in tool col
   layerIconStack: { gap: 2, alignItems: 'center' },
   layerLine: { width: 18, height: 2, backgroundColor: '#666', borderRadius: 1 },
-
-  // ===== LAYERS PANEL — opens rightward from tool column =====
   layersPanel: {
     position: 'absolute',
     left: spacing.sm + 46,
@@ -601,75 +571,50 @@ const styles = StyleSheet.create({
   layerIcon: { fontSize: 16 },
   layerLabel: { flex: 1, color: colors.textSec, fontSize: 12, fontWeight: '500' },
   layerLabelActive: { color: colors.text },
-  mapTypeSection: {
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
-  },
-  mapTypeSectionTitle: {
-    color: colors.textDim,
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: spacing.sm,
-  },
-  mapTypeRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  mapTypeBtn: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-  },
-  mapTypeBtnActive: {
-    borderColor: colors.blue,
-    backgroundColor: `${colors.blue}15`,
-  },
-  mapTypeBtnText: {
-    color: colors.textSec,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  mapTypeBtnTextActive: {
-    color: colors.blue,
-  },
-
-  // (LIVE indicator now embedded in topBarRow2 as livePill)
-
-  // Markers — smaller, cleaner
   marker: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: 'rgba(8,11,42,0.88)', borderWidth: 2,
-    justifyContent: 'center', alignItems: 'center',
-    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 }, elevation: 4,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(8,11,42,0.88)',
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
   },
   markerEmoji: { fontSize: 16 },
-
-  // Bottom Sheet
   bottomSheetBackground: {
     backgroundColor: '#0E1228',
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     borderColor: 'rgba(255,255,255,0.1)',
-    borderTopWidth: 1, borderLeftWidth: 1, borderRightWidth: 1,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
   },
   handleIndicator: {
     backgroundColor: 'rgba(255,255,255,0.25)',
-    width: 36, height: 4, borderRadius: 2,
+    width: 36,
+    height: 4,
+    borderRadius: 2,
   },
   bottomSheetContent: {
-    flex: 1, backgroundColor: '#0E1228',
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingHorizontal: spacing.lg, paddingTop: spacing.md,
+    flex: 1,
+    backgroundColor: '#0E1228',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
   },
   tabBar: {
-    flexDirection: 'row', marginBottom: spacing.lg,
-    borderBottomColor: colors.border, borderBottomWidth: 1, gap: spacing.md,
+    flexDirection: 'row',
+    marginBottom: spacing.lg,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    gap: spacing.md,
   },
   tab: { paddingVertical: spacing.md, borderBottomWidth: 2, borderBottomColor: 'transparent' },
   tabActive: { borderBottomColor: colors.blue },
@@ -677,19 +622,30 @@ const styles = StyleSheet.create({
   tabTextActive: { color: colors.blue },
   cardsContainer: { gap: spacing.md },
   card: {
-    flexDirection: 'row', backgroundColor: colors.panelLight,
-    borderColor: colors.border, borderWidth: 1, borderRadius: 12,
-    padding: spacing.lg, gap: spacing.md,
+    flexDirection: 'row',
+    backgroundColor: colors.panelLight,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.lg,
+    gap: spacing.md,
   },
   cardIcon: {
-    width: 48, height: 48, borderRadius: 8,
-    backgroundColor: colors.bg, justifyContent: 'center', alignItems: 'center',
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: colors.bg,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   cardIconText: { fontSize: 28 },
   cardContent: { flex: 1 },
   cardHeader: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.xs,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
   },
   cardTitle: { color: colors.text, fontSize: 13, fontWeight: '600', flex: 1 },
   severityBadge: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: 4 },

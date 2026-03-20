@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -14,70 +14,61 @@ import {
   Image,
 } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
+import { useAuth, useSignIn, useSignUp } from '@clerk/clerk-expo';
 import { colors, spacing } from '../theme';
 import { AppContext } from '../../App';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 const leonaBadge = require('../assets/leona-badge.png');
 
-const { width, height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-const EVENT_TYPES = [
-  { id: 'wildfire', label: 'Wildfire', emoji: '🔥' },
-  { id: 'hurricanes', label: 'Hurricanes', emoji: '🌀' },
-  { id: 'floods', label: 'Floods', emoji: '🌊' },
-  { id: 'earthquakes', label: 'Earthquakes', emoji: '⚡' },
-  { id: 'conflict', label: 'Conflict', emoji: '⚔️' },
-  { id: 'drought', label: 'Drought', emoji: '☀️' },
-  { id: 'volcanic', label: 'Volcanic', emoji: '🌋' },
-  { id: 'health', label: 'Health', emoji: '🦠' },
-];
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const PRODUCTS = [
   {
     id: 'guardian_pro',
     label: 'Guardian Pro',
     desc: 'Enterprise, EMS & Law Enforcement',
-    emoji: '🏢',
+    icon: 'HQ',
     accent: colors.blue,
   },
   {
     id: 'event360',
     label: 'EVENT 360',
     desc: 'Insurance & Claims Processing',
-    emoji: '📋',
+    icon: 'EV',
     accent: '#FF9800',
   },
   {
     id: 'guardian',
     label: 'Guardian',
     desc: 'Personal & Family Safety',
-    emoji: '👤',
+    icon: 'GS',
     accent: colors.purple,
   },
 ];
 
 export default function OnboardingScreen() {
   const { handleOnboardingComplete } = useContext(AppContext);
-  // Steps: 0=welcome/auth, 1=sign-in form OR skip, 2=product select, 3=location, 4=interests, 5=ready
+  const { isLoaded: authLoaded, isSignedIn } = useAuth();
+  const { isLoaded: signInLoaded, signIn, setActive } = useSignIn();
+  const { isLoaded: signUpLoaded, signUp } = useSignUp();
+
   const [step, setStep] = useState(0);
-  const [authMode, setAuthMode] = useState(null); // 'signin', 'create', 'guest'
+  const [authMode, setAuthMode] = useState(null);
   const [email, setEmail] = useState('example@user.com');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
   const [fullName, setFullName] = useState('');
+  const [organization, setOrganization] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [verificationMode, setVerificationMode] = useState(null);
+  const [secondFactorStrategy, setSecondFactorStrategy] = useState(null);
+  const [submittingAuth, setSubmittingAuth] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState('guardian_pro');
   const [location, setLocation] = useState('Sydney, Australia');
   const [selectedRadius, setSelectedRadius] = useState(50);
-  const [selectedTypes, setSelectedTypes] = useState([
-    'wildfire',
-    'hurricanes',
-    'floods',
-    'conflict',
-  ]);
   const [pulseAnim] = useState(new Animated.Value(1));
 
-  // Pulsing animation for final step
   useEffect(() => {
     if (step === 5) {
       const animation = Animated.loop(
@@ -97,37 +88,241 @@ export default function OnboardingScreen() {
       animation.start();
       return () => animation.stop();
     }
-  }, [step, pulseAnim]);
+  }, [pulseAnim, step]);
 
-  const toggleEventType = (typeId) => {
-    setSelectedTypes((prev) =>
-      prev.includes(typeId)
-        ? prev.filter((id) => id !== typeId)
-        : [...prev, typeId]
+  useEffect(() => {
+    if (authLoaded && isSignedIn && step === 4) {
+      setStep(2);
+    }
+  }, [authLoaded, isSignedIn, step]);
+
+  const productLabel = PRODUCTS.find((p) => p.id === selectedProduct)?.label || 'LEONA';
+
+  const showClerkError = (error, fallbackMessage) => {
+    const firstError = error?.errors?.[0];
+    const message = firstError?.longMessage || firstError?.message || fallbackMessage;
+    Alert.alert('Authentication error', message);
+  };
+
+  const showAuthorizedPartyHelp = (clientTrustState) => {
+    const trustLine = clientTrustState ? `Client trust state: ${clientTrustState}.` : '';
+    Alert.alert(
+      'Clerk configuration required',
+      `This mobile app is not yet allowed as an authorized client. ${trustLine} Add "space.guardian.pro" to Clerk Authorized Parties, or relax the azp check for native clients, then try signing in again.`
     );
   };
 
-  const handleSignIn = () => {
-    // Demo: accept any email/password
-    if (!email.trim()) {
-      Alert.alert('Email required', 'Please enter your email address.');
-      return;
-    }
-    setStep(2); // go to product selection
+  const parseName = () => {
+    const parts = fullName.trim().split(/\s+/).filter(Boolean);
+    return {
+      firstName: parts[0] || '',
+      lastName: parts.slice(1).join(' '),
+    };
   };
 
-  const handleCreateAccount = () => {
+  const getPreferredSecondFactor = (factors = []) => {
+    const preferredOrder = ['email_code', 'phone_code', 'totp', 'backup_code'];
+    for (const strategy of preferredOrder) {
+      const match = factors.find((factor) => factor?.strategy === strategy);
+      if (match) return match.strategy;
+    }
+    return factors[0]?.strategy || null;
+  };
+
+  const getVerificationCopy = () => {
+    if (verificationMode === 'signin_second_factor') {
+      const strategyLabel = secondFactorStrategy === 'email_code'
+        ? `Enter the code sent to ${email}.`
+        : secondFactorStrategy === 'phone_code'
+          ? 'Enter the code sent to your phone.'
+          : secondFactorStrategy === 'backup_code'
+            ? 'Enter one of your backup codes.'
+            : 'Enter your verification code to finish signing in.';
+      return {
+        title: 'Verify sign in',
+        subtitle: strategyLabel,
+        buttonLabel: 'VERIFY SIGN IN',
+      };
+    }
+
+    return {
+      title: 'Verify your email',
+      subtitle: `Enter the code Clerk sent to ${email}.`,
+      buttonLabel: 'VERIFY EMAIL',
+    };
+  };
+
+  const handleSignIn = async () => {
+    if (!authLoaded || !signInLoaded) {
+      Alert.alert('Please wait', 'Authentication is still loading.');
+      return;
+    }
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Credentials required', 'Enter your email and password.');
+      return;
+    }
+
+    setSubmittingAuth(true);
+    try {
+      const result = await signIn.create({
+        identifier: email.trim(),
+        password,
+      });
+
+      if (result.status === 'complete' && result.createdSessionId) {
+        await setActive({ session: result.createdSessionId });
+        setStep(2);
+        return;
+      }
+
+      if (result.status === 'needs_second_factor') {
+        const strategy = getPreferredSecondFactor(result.supportedSecondFactors || []);
+        if (!strategy) {
+          Alert.alert('Verification required', 'Your account requires a second factor, but no supported method was returned.');
+          return;
+        }
+
+        if (strategy === 'email_code' || strategy === 'phone_code') {
+          await result.prepareSecondFactor({ strategy });
+        }
+
+        setSecondFactorStrategy(strategy);
+        setVerificationMode('signin_second_factor');
+        setVerificationCode('');
+        setStep(4);
+        return;
+      }
+
+      if (result.status === 'needs_client_trust') {
+        showAuthorizedPartyHelp(result.clientTrustState);
+        return;
+      }
+
+      if (result.status === 'needs_new_password') {
+        Alert.alert('Password update required', 'This account must set a new password before sign-in can complete.');
+        return;
+      }
+
+      Alert.alert('Sign-in not completed', `Clerk returned status "${result.status}".`);
+    } catch (error) {
+      showClerkError(error, 'Unable to sign in.');
+    } finally {
+      setSubmittingAuth(false);
+    }
+  };
+
+  const handleCreateAccount = async () => {
+    if (!authLoaded || !signUpLoaded) {
+      Alert.alert('Please wait', 'Authentication is still loading.');
+      return;
+    }
     if (!fullName.trim() || !email.trim()) {
       Alert.alert('Required fields', 'Please enter your name and email.');
       return;
     }
-    setStep(2); // go to product selection
+    if (!password.trim()) {
+      Alert.alert('Password required', 'Please create a password.');
+      return;
+    }
+
+    const { firstName, lastName } = parseName();
+    setSubmittingAuth(true);
+    try {
+      const result = await signUp.create({
+        emailAddress: email.trim(),
+        password,
+        firstName: firstName || undefined,
+        lastName: lastName || undefined,
+      });
+
+      if (result.status === 'complete' && result.createdSessionId) {
+        await setActive({ session: result.createdSessionId });
+        setStep(2);
+        return;
+      }
+
+      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+      setVerificationMode('signup');
+      setVerificationCode('');
+      setStep(4);
+    } catch (error) {
+      showClerkError(error, 'Unable to create account.');
+    } finally {
+      setSubmittingAuth(false);
+    }
+  };
+
+  const handleVerifyEmail = async () => {
+    if (verificationMode === 'signin_second_factor') {
+      if (!signInLoaded || !secondFactorStrategy) {
+        Alert.alert('Please wait', 'Authentication is still loading.');
+        return;
+      }
+      if (!verificationCode.trim()) {
+        Alert.alert('Verification code required', 'Enter your verification code.');
+        return;
+      }
+
+      setSubmittingAuth(true);
+      try {
+        const result = await signIn.attemptSecondFactor({
+          strategy: secondFactorStrategy,
+          code: verificationCode.trim(),
+        });
+
+        if (result.status !== 'complete' || !result.createdSessionId) {
+          Alert.alert('Verification incomplete', `Clerk returned status "${result.status}".`);
+          return;
+        }
+
+        await setActive({ session: result.createdSessionId });
+        setVerificationMode(null);
+        setSecondFactorStrategy(null);
+        setVerificationCode('');
+        setStep(2);
+      } catch (error) {
+        showClerkError(error, 'Unable to verify sign-in.');
+      } finally {
+        setSubmittingAuth(false);
+      }
+      return;
+    }
+
+    if (!signUpLoaded) {
+      Alert.alert('Please wait', 'Authentication is still loading.');
+      return;
+    }
+    if (!verificationCode.trim()) {
+      Alert.alert('Verification code required', 'Enter the code sent to your email.');
+      return;
+    }
+
+    setSubmittingAuth(true);
+    try {
+      const result = await signUp.attemptEmailAddressVerification({
+        code: verificationCode.trim(),
+      });
+
+      if (result.status !== 'complete' || !result.createdSessionId) {
+        Alert.alert('Verification incomplete', 'The account is not ready yet. Check the code and try again.');
+        return;
+      }
+
+      await setActive({ session: result.createdSessionId });
+      setVerificationMode(null);
+      setStep(2);
+    } catch (error) {
+      showClerkError(error, 'Unable to verify email.');
+    } finally {
+      setSubmittingAuth(false);
+    }
   };
 
   const handleGuestContinue = () => {
+    setAuthMode('guest');
     setEmail('guest@leona.ai');
     setFullName('Guest User');
-    setStep(2); // go to product selection
+    setStep(2);
   };
 
   const handleComplete = () => {
@@ -135,21 +330,25 @@ export default function OnboardingScreen() {
       authMode,
       email,
       fullName,
+      organization,
       product: selectedProduct,
       location,
       radius: selectedRadius,
-      eventTypes: selectedTypes,
     });
   };
-
-  const productLabel = PRODUCTS.find((p) => p.id === selectedProduct)?.label || 'LEONA';
 
   return (
     <View style={styles.container}>
       {step === 0 && (
         <StepWelcome
-          onSignIn={() => { setAuthMode('signin'); setStep(1); }}
-          onCreateAccount={() => { setAuthMode('create'); setStep(1); }}
+          onSignIn={() => {
+            setAuthMode('signin');
+            setStep(1);
+          }}
+          onCreateAccount={() => {
+            setAuthMode('create');
+            setStep(1);
+          }}
           onGuest={handleGuestContinue}
         />
       )}
@@ -163,6 +362,7 @@ export default function OnboardingScreen() {
           setRememberMe={setRememberMe}
           onSubmit={handleSignIn}
           onBack={() => setStep(0)}
+          submitting={submittingAuth}
         />
       )}
       {step === 1 && authMode === 'create' && (
@@ -173,8 +373,11 @@ export default function OnboardingScreen() {
           setEmail={setEmail}
           password={password}
           setPassword={setPassword}
+          organization={organization}
+          setOrganization={setOrganization}
           onSubmit={handleCreateAccount}
           onBack={() => setStep(0)}
+          submitting={submittingAuth}
         />
       )}
       {step === 2 && (
@@ -195,17 +398,27 @@ export default function OnboardingScreen() {
         />
       )}
       {step === 4 && (
-        <StepInterests
-          selectedTypes={selectedTypes}
-          toggleEventType={toggleEventType}
-          onNext={() => setStep(5)}
+        <StepVerifyEmail
+          title={getVerificationCopy().title}
+          subtitle={getVerificationCopy().subtitle}
+          buttonLabel={getVerificationCopy().buttonLabel}
+          email={email}
+          verificationCode={verificationCode}
+          setVerificationCode={setVerificationCode}
+          onSubmit={handleVerifyEmail}
+          onBack={() => {
+            setVerificationCode('');
+            setVerificationMode(null);
+            setSecondFactorStrategy(null);
+            setStep(1);
+          }}
+          submitting={submittingAuth}
         />
       )}
       {step === 5 && (
         <StepReady
           location={location}
           radius={selectedRadius}
-          eventTypes={selectedTypes}
           product={selectedProduct}
           productLabel={productLabel}
           onComplete={handleComplete}
@@ -216,23 +429,17 @@ export default function OnboardingScreen() {
   );
 }
 
-// STEP 0 - WELCOME / AUTH OPTIONS
 const StepWelcome = ({ onSignIn, onCreateAccount, onGuest }) => (
   <View style={styles.welcomeContainer}>
-    {/* Top half: full LEONA badge logo */}
     <View style={styles.welcomeLogoArea}>
       <Image source={leonaBadge} style={styles.welcomeLogo} resizeMode="contain" />
     </View>
-
-    {/* Bottom half: title, tagline, buttons */}
     <View style={styles.welcomeContent}>
-      {/* Title + tagline */}
       <View style={styles.titleContainer}>
         <Text style={styles.title}>LEONA</Text>
       </View>
       <Text style={styles.subtitle}>Monitor. Guide. Protect.</Text>
 
-      {/* Buttons */}
       <TouchableOpacity style={styles.buttonPrimary} onPress={onSignIn}>
         <Text style={styles.buttonTextPrimary}>SIGN IN</Text>
       </TouchableOpacity>
@@ -242,26 +449,23 @@ const StepWelcome = ({ onSignIn, onCreateAccount, onGuest }) => (
       </TouchableOpacity>
 
       <TouchableOpacity onPress={onGuest}>
-        <Text style={styles.linkText}>Continue as Guest  →</Text>
+        <Text style={styles.linkText}>Continue as Guest -></Text>
       </TouchableOpacity>
 
-      {/* Feature Pills */}
       <View style={styles.featurePills}>
-        {['21 Disaster Types','AI Intelligence','Live Data','Global News','Markets','Sports'].map((label) => (
+        {['21 Disaster Types', 'AI Intelligence', 'Live Data', 'Global News', 'Markets', 'Sports'].map((label) => (
           <View key={label} style={styles.pill}>
             <Text style={styles.pillText}>{label}</Text>
           </View>
         ))}
       </View>
 
-      {/* Footer */}
       <Text style={styles.copyrightText}>Property of Guardian Space</Text>
     </View>
   </View>
 );
 
-// STEP 1a - SIGN IN FORM
-const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRememberMe, onSubmit, onBack }) => {
+const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRememberMe, onSubmit, onBack, submitting }) => {
   const handleFaceID = async () => {
     try {
       const compatible = await LocalAuthentication.hasHardwareAsync();
@@ -271,7 +475,7 @@ const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRem
       }
       const enrolled = await LocalAuthentication.isEnrolledAsync();
       if (!enrolled) {
-        Alert.alert('Face ID not set up', 'Please enable Face ID in your device Settings first.');
+        Alert.alert('Face ID not set up', 'Please enable Face ID in your device settings first.');
         return;
       }
       const result = await LocalAuthentication.authenticateAsync({
@@ -282,8 +486,8 @@ const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRem
       if (result.success) {
         onSubmit();
       }
-    } catch (e) {
-      Alert.alert('Authentication error', e.message);
+    } catch (error) {
+      Alert.alert('Authentication error', error.message);
     }
   };
 
@@ -291,7 +495,7 @@ const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRem
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={styles.stepContainer}>
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backText}>← Back</Text>
+          <Text style={styles.backText}>{'<'} Back</Text>
         </TouchableOpacity>
 
         <View style={styles.avatarContainer}>
@@ -301,9 +505,7 @@ const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRem
         <Text style={styles.stepTitle}>Welcome back</Text>
         <Text style={styles.stepSubtitle}>Sign in to your LEONA account</Text>
 
-        {/* Face ID button */}
         <TouchableOpacity style={styles.faceIDBtn} onPress={handleFaceID} activeOpacity={0.75}>
-          <Text style={styles.faceIDIcon}>󿿣</Text>
           <Text style={styles.faceIDText}>Sign in with Face ID</Text>
         </TouchableOpacity>
 
@@ -313,33 +515,21 @@ const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRem
           <View style={styles.orLine} />
         </View>
 
-        <View style={styles.inputContainer}>
-          <Text style={styles.inputLabel}>EMAIL</Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="you@company.com"
-            placeholderTextColor={colors.textDim}
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            autoCorrect={false}
-          />
-        </View>
+        <FormInput
+          label="EMAIL"
+          value={email}
+          onChangeText={setEmail}
+          placeholder="you@company.com"
+          keyboardType="email-address"
+        />
+        <FormInput
+          label="PASSWORD"
+          value={password}
+          onChangeText={setPassword}
+          placeholder="Enter password"
+          secureTextEntry
+        />
 
-        <View style={styles.inputContainer}>
-          <Text style={styles.inputLabel}>PASSWORD</Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Enter password (optional in demo)"
-            placeholderTextColor={colors.textDim}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
-        </View>
-
-        {/* Remember me + Forgot password row */}
         <View style={styles.rememberRow}>
           <TouchableOpacity
             style={styles.rememberToggle}
@@ -356,24 +546,31 @@ const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRem
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.buttonPrimary} onPress={onSubmit}>
-          <Text style={styles.buttonTextPrimary}>SIGN IN →</Text>
+        <TouchableOpacity style={styles.buttonPrimary} onPress={onSubmit} disabled={submitting}>
+          <Text style={styles.buttonTextPrimary}>{submitting ? 'SIGNING IN...' : 'SIGN IN ->'}</Text>
         </TouchableOpacity>
-
-        <Text style={styles.demoNotice}>
-          Demo mode — tap Sign In to continue
-        </Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 };
 
-// STEP 1b - CREATE ACCOUNT FORM
-const StepCreateAccount = ({ fullName, setFullName, email, setEmail, password, setPassword, onSubmit, onBack }) => (
+const StepCreateAccount = ({
+  fullName,
+  setFullName,
+  email,
+  setEmail,
+  password,
+  setPassword,
+  organization,
+  setOrganization,
+  onSubmit,
+  onBack,
+  submitting,
+}) => (
   <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <ScrollView contentContainerStyle={styles.stepContainer}>
       <TouchableOpacity onPress={onBack} style={styles.backButton}>
-        <Text style={styles.backText}>← Back</Text>
+        <Text style={styles.backText}>{'<'} Back</Text>
       </TouchableOpacity>
 
       <View style={styles.avatarContainer}>
@@ -383,73 +580,72 @@ const StepCreateAccount = ({ fullName, setFullName, email, setEmail, password, s
       <Text style={styles.stepTitle}>Create your account</Text>
       <Text style={styles.stepSubtitle}>LEONA will configure your intelligence dashboard</Text>
 
-      <View style={styles.inputContainer}>
-        <Text style={styles.inputLabel}>FULL NAME</Text>
-        <TextInput
-          style={styles.textInput}
-          placeholder="John Smith"
-          placeholderTextColor={colors.textDim}
-          value={fullName}
-          onChangeText={setFullName}
-          autoCorrect={false}
-        />
-      </View>
+      <FormInput
+        label="FULL NAME"
+        value={fullName}
+        onChangeText={setFullName}
+        placeholder="John Smith"
+      />
+      <FormInput
+        label="EMAIL"
+        value={email}
+        onChangeText={setEmail}
+        placeholder="you@company.com"
+        keyboardType="email-address"
+      />
+      <FormInput
+        label="PASSWORD"
+        value={password}
+        onChangeText={setPassword}
+        placeholder="Create a password"
+        secureTextEntry
+      />
+      <FormInput
+        label="ORGANISATION (OPTIONAL)"
+        value={organization}
+        onChangeText={setOrganization}
+        placeholder="Company name"
+      />
 
-      <View style={styles.inputContainer}>
-        <Text style={styles.inputLabel}>EMAIL</Text>
-        <TextInput
-          style={styles.textInput}
-          placeholder="you@company.com"
-          placeholderTextColor={colors.textDim}
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          autoCorrect={false}
-        />
-      </View>
-
-      <View style={styles.inputContainer}>
-        <Text style={styles.inputLabel}>PASSWORD</Text>
-        <TextInput
-          style={styles.textInput}
-          placeholder="Create a password"
-          placeholderTextColor={colors.textDim}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
-      </View>
-
-      <View style={styles.inputContainer}>
-        <Text style={styles.inputLabel}>ORGANISATION (OPTIONAL)</Text>
-        <TextInput
-          style={styles.textInput}
-          placeholder="Company name"
-          placeholderTextColor={colors.textDim}
-          autoCorrect={false}
-        />
-      </View>
-
-      <TouchableOpacity style={styles.buttonPrimary} onPress={onSubmit}>
-        <Text style={styles.buttonTextPrimary}>CREATE ACCOUNT →</Text>
+      <TouchableOpacity style={styles.buttonPrimary} onPress={onSubmit} disabled={submitting}>
+        <Text style={styles.buttonTextPrimary}>{submitting ? 'CREATING ACCOUNT...' : 'CREATE ACCOUNT ->'}</Text>
       </TouchableOpacity>
-
-      <Text style={styles.demoNotice}>
-        Demo mode — enter any details to continue
-      </Text>
     </ScrollView>
   </KeyboardAvoidingView>
 );
 
-// STEP 2 - PRODUCT SELECTION
+const StepVerifyEmail = ({ title, subtitle, buttonLabel, verificationCode, setVerificationCode, onSubmit, onBack, submitting }) => (
+  <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <ScrollView contentContainerStyle={styles.stepContainer}>
+      <TouchableOpacity onPress={onBack} style={styles.backButton}>
+        <Text style={styles.backText}>{'<'} Back</Text>
+      </TouchableOpacity>
+
+      <View style={styles.avatarContainer}>
+        <Image source={leonaAvatar} style={styles.avatarImageSmall} />
+      </View>
+
+      <Text style={styles.stepTitle}>{title}</Text>
+      <Text style={styles.stepSubtitle}>{subtitle}</Text>
+
+      <FormInput
+        label="VERIFICATION CODE"
+        value={verificationCode}
+        onChangeText={setVerificationCode}
+        placeholder="123456"
+        keyboardType="number-pad"
+      />
+
+      <TouchableOpacity style={styles.buttonPrimary} onPress={onSubmit} disabled={submitting}>
+        <Text style={styles.buttonTextPrimary}>{submitting ? 'VERIFYING...' : `${buttonLabel} ->`}</Text>
+      </TouchableOpacity>
+    </ScrollView>
+  </KeyboardAvoidingView>
+);
+
 const StepProductSelect = ({ selectedProduct, setSelectedProduct, onNext }) => (
   <ScrollView contentContainerStyle={styles.stepContainer}>
-    <View style={styles.progressBar}>
-      <View style={[styles.progressSegment, styles.progressFilled]} />
-      <View style={styles.progressSegment} />
-      <View style={styles.progressSegment} />
-    </View>
+    <ProgressBar count={3} filled={1} />
 
     <Text style={styles.stepTitle}>How will you use LEONA?</Text>
     <Text style={styles.stepSubtitle}>
@@ -470,7 +666,9 @@ const StepProductSelect = ({ selectedProduct, setSelectedProduct, onNext }) => (
         activeOpacity={0.7}
       >
         <View style={styles.productRow}>
-          <Text style={styles.productEmoji}>{product.emoji}</Text>
+          <View style={[styles.productIcon, { borderColor: product.accent }]}>
+            <Text style={[styles.productIconText, { color: product.accent }]}>{product.icon}</Text>
+          </View>
           <View style={styles.productInfo}>
             <Text style={[styles.productLabel, selectedProduct === product.id && { color: product.accent }]}>
               {product.label}
@@ -479,7 +677,7 @@ const StepProductSelect = ({ selectedProduct, setSelectedProduct, onNext }) => (
           </View>
           {selectedProduct === product.id && (
             <View style={[styles.productCheck, { backgroundColor: product.accent }]}>
-              <Text style={styles.productCheckText}>✓</Text>
+              <Text style={styles.productCheckText}>OK</Text>
             </View>
           )}
         </View>
@@ -487,34 +685,19 @@ const StepProductSelect = ({ selectedProduct, setSelectedProduct, onNext }) => (
     ))}
 
     <TouchableOpacity style={styles.buttonPrimary} onPress={onNext}>
-      <Text style={styles.buttonTextPrimary}>NEXT →</Text>
+      <Text style={styles.buttonTextPrimary}>NEXT -></Text>
     </TouchableOpacity>
   </ScrollView>
 );
 
-// STEP 3 - LOCATION
-const StepLocation = ({
-  location,
-  setLocation,
-  selectedRadius,
-  setSelectedRadius,
-  onNext,
-  onSkip,
-}) => (
+const StepLocation = ({ location, setLocation, selectedRadius, setSelectedRadius, onNext, onSkip }) => (
   <ScrollView contentContainerStyle={styles.stepContainer}>
-    <View style={styles.progressBar}>
-      <View style={[styles.progressSegment, styles.progressFilled]} />
-      <View style={[styles.progressSegment, styles.progressFilled]} />
-      <View style={styles.progressSegment} />
-    </View>
+    <ProgressBar count={3} filled={2} />
 
     <Text style={styles.stepTitle}>Where are you based?</Text>
-    <Text style={styles.stepSubtitle}>
-      LEONA will prioritise intelligence and alerts for this area
-    </Text>
+    <Text style={styles.stepSubtitle}>LEONA will prioritise intelligence and alerts for this area</Text>
 
     <View style={styles.searchContainer}>
-      <Text style={styles.searchIcon}>📍</Text>
       <TextInput
         style={styles.searchInput}
         placeholder="Enter city or region"
@@ -524,7 +707,6 @@ const StepLocation = ({
       />
     </View>
 
-    {/* Quick Location Suggestions */}
     <View style={styles.locationSuggestions}>
       {['Sydney, Australia', 'London, UK', 'New York, US', 'Dubai, UAE', 'Singapore'].map((loc) => (
         <TouchableOpacity
@@ -532,39 +714,26 @@ const StepLocation = ({
           style={[styles.locationChip, location === loc && styles.locationChipSelected]}
           onPress={() => setLocation(loc)}
         >
-          <Text style={[styles.locationChipText, location === loc && styles.locationChipTextSelected]}>
-            {loc}
-          </Text>
+          <Text style={[styles.locationChipText, location === loc && styles.locationChipTextSelected]}>{loc}</Text>
         </TouchableOpacity>
       ))}
     </View>
 
-    {/* Map Preview */}
     <View style={styles.mapPreview}>
       <View style={styles.mapPlaceholder}>
-        <Text style={styles.mapIcon}>🗺</Text>
         <Text style={styles.mapText}>{location || 'Select a location'}</Text>
       </View>
     </View>
 
-    {/* Radius Selection */}
     <Text style={styles.radiusLabel}>Monitoring radius</Text>
     <View style={styles.radiusButtons}>
       {[25, 50, 100, 200].map((radius) => (
         <TouchableOpacity
           key={radius}
-          style={[
-            styles.radiusButton,
-            selectedRadius === radius && styles.radiusButtonSelected,
-          ]}
+          style={[styles.radiusButton, selectedRadius === radius && styles.radiusButtonSelected]}
           onPress={() => setSelectedRadius(radius)}
         >
-          <Text
-            style={[
-              styles.radiusButtonText,
-              selectedRadius === radius && styles.radiusButtonTextSelected,
-            ]}
-          >
+          <Text style={[styles.radiusButtonText, selectedRadius === radius && styles.radiusButtonTextSelected]}>
             {radius}km
           </Text>
         </TouchableOpacity>
@@ -572,7 +741,7 @@ const StepLocation = ({
     </View>
 
     <TouchableOpacity style={styles.buttonPrimary} onPress={onNext}>
-      <Text style={styles.buttonTextPrimary}>NEXT →</Text>
+      <Text style={styles.buttonTextPrimary}>NEXT -></Text>
     </TouchableOpacity>
 
     <TouchableOpacity onPress={onSkip}>
@@ -581,116 +750,77 @@ const StepLocation = ({
   </ScrollView>
 );
 
-// STEP 4 - INTERESTS
-const StepInterests = ({ selectedTypes, toggleEventType, onNext }) => (
-  <ScrollView contentContainerStyle={styles.stepContainer}>
-    <View style={styles.progressBar}>
-      <View style={[styles.progressSegment, styles.progressFilled]} />
-      <View style={[styles.progressSegment, styles.progressFilled]} />
-      <View style={[styles.progressSegment, styles.progressFilled]} />
-      <View style={styles.progressSegment} />
-    </View>
-
-    <Text style={styles.stepTitle}>What should LEONA monitor?</Text>
-
-    <View style={styles.eventGrid}>
-      {EVENT_TYPES.map((type) => (
-        <TouchableOpacity
-          key={type.id}
-          style={[
-            styles.eventCard,
-            selectedTypes.includes(type.id) && styles.eventCardSelected,
-          ]}
-          onPress={() => toggleEventType(type.id)}
-        >
-          <Text style={styles.eventEmoji}>{type.emoji}</Text>
-          <Text style={styles.eventLabel}>{type.label}</Text>
-          {selectedTypes.includes(type.id) && (
-            <View style={styles.checkmark}>
-              <Text style={styles.checkmarkText}>✓</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      ))}
-    </View>
-
-    <TouchableOpacity style={styles.buttonPrimary} onPress={onNext}>
-      <Text style={styles.buttonTextPrimary}>NEXT →</Text>
-    </TouchableOpacity>
-  </ScrollView>
-);
-
-// STEP 5 - READY
-const StepReady = ({ location, radius, eventTypes, product, productLabel, onComplete, pulseAnim }) => {
+const StepReady = ({ location, radius, product, productLabel, onComplete, pulseAnim }) => {
   const productData = PRODUCTS.find((p) => p.id === product);
 
   return (
     <ScrollView contentContainerStyle={styles.stepContainer}>
-      <View style={styles.progressBar}>
-        <View style={[styles.progressSegment, styles.progressFilled]} />
-        <View style={[styles.progressSegment, styles.progressFilled]} />
-        <View style={[styles.progressSegment, styles.progressFilled]} />
-      </View>
+      <ProgressBar count={3} filled={3} />
 
-      <Animated.View
-        style={[styles.avatarContainer, { transform: [{ scale: pulseAnim }] }]}
-      >
+      <Animated.View style={[styles.avatarContainer, { transform: [{ scale: pulseAnim }] }]}>
         <Image source={leonaAvatar} style={styles.avatarImage} />
       </Animated.View>
 
       <Text style={styles.stepTitle}>LEONA is configured.</Text>
-
       <Text style={styles.stepSubtitle}>
-        I'm now monitoring {location || 'your area'} across all 21+ event types in real-time.
+        I am now monitoring {location || 'your area'} across all active event categories in real time.
       </Text>
 
-      {/* Config Summary Card */}
       <View style={styles.summaryCard}>
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>{productData?.emoji} Product</Text>
-          <Text style={[styles.summaryValue, { color: productData?.accent }]}>{productLabel}</Text>
-        </View>
-
+        <SummaryRow label="Product" value={productLabel} color={productData?.accent} />
         <View style={styles.summaryDivider} />
-
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>📍 Location</Text>
-          <Text style={styles.summaryValue}>{location || 'Not set'}</Text>
-        </View>
-
+        <SummaryRow label="Location" value={location || 'Not set'} />
         <View style={styles.summaryDivider} />
-
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>📊 Radius</Text>
-          <Text style={styles.summaryValue}>{radius}km</Text>
-        </View>
-
+        <SummaryRow label="Radius" value={`${radius}km`} />
         <View style={styles.summaryDivider} />
-
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>🔔 Monitoring</Text>
-          <Text style={styles.summaryValue}>21+ Event Types</Text>
-        </View>
+        <SummaryRow label="Monitoring" value="Live intelligence" />
       </View>
 
       <TouchableOpacity style={styles.buttonPrimary} onPress={onComplete}>
-        <Text style={styles.buttonTextPrimary}>ENTER {productLabel.toUpperCase()} →</Text>
+        <Text style={styles.buttonTextPrimary}>ENTER {productLabel.toUpperCase()} -></Text>
       </TouchableOpacity>
 
-      <Text style={styles.footerText}>
-        You can change these anytime in Settings
-      </Text>
+      <Text style={styles.footerText}>You can change these anytime in Settings</Text>
     </ScrollView>
   );
 };
+
+const FormInput = ({ label, ...props }) => (
+  <View style={styles.inputContainer}>
+    <Text style={styles.inputLabel}>{label}</Text>
+    <TextInput
+      style={styles.textInput}
+      placeholderTextColor={colors.textDim}
+      autoCapitalize="none"
+      autoCorrect={false}
+      {...props}
+    />
+  </View>
+);
+
+const ProgressBar = ({ count, filled }) => (
+  <View style={styles.progressBar}>
+    {Array.from({ length: count }, (_, index) => (
+      <View
+        key={index}
+        style={[styles.progressSegment, index < filled && styles.progressFilled]}
+      />
+    ))}
+  </View>
+);
+
+const SummaryRow = ({ label, value, color }) => (
+  <View style={styles.summaryRow}>
+    <Text style={styles.summaryLabel}>{label}</Text>
+    <Text style={[styles.summaryValue, color ? { color } : null]}>{value}</Text>
+  </View>
+);
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg,
   },
-
-  // WELCOME STEP LAYOUT — logo fills top half, content fills bottom half
   welcomeContainer: {
     flex: 1,
   },
@@ -710,16 +840,12 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.lg,
     justifyContent: 'center',
   },
-
-  // LAYOUT
   stepContainer: {
     flexGrow: 1,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.xl,
     paddingTop: 60,
   },
-
-  // BACK BUTTON
   backButton: {
     marginBottom: spacing.lg,
   },
@@ -728,8 +854,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-
-  // PROGRESS BAR
   progressBar: {
     flexDirection: 'row',
     marginBottom: spacing.xl,
@@ -744,8 +868,6 @@ const styles = StyleSheet.create({
   progressFilled: {
     backgroundColor: colors.blue,
   },
-
-  // AVATAR
   avatarContainer: {
     alignItems: 'center',
     marginBottom: spacing.xl,
@@ -765,8 +887,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.purpleLight,
   },
-
-  // TITLES & TEXT
   titleContainer: {
     alignItems: 'center',
     marginBottom: spacing.md,
@@ -784,14 +904,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
     letterSpacing: 1.5,
   },
-  welcomeDesc: {
-    fontSize: 14,
-    color: colors.textSec,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: spacing.xl,
-    paddingHorizontal: spacing.lg,
-  },
   stepTitle: {
     fontSize: 24,
     fontWeight: '700',
@@ -804,8 +916,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
     lineHeight: 20,
   },
-
-  // BUTTONS
   buttonPrimary: {
     backgroundColor: colors.blue,
     paddingVertical: spacing.lg,
@@ -839,12 +949,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: spacing.xl,
   },
-  // Face ID button
   faceIDBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 10,
@@ -852,18 +960,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.panel,
     marginBottom: spacing.lg,
   },
-  faceIDIcon: {
-    fontSize: 22,
-    color: colors.text,
-  },
   faceIDText: {
     fontSize: 14,
     fontWeight: '600',
     color: colors.text,
     letterSpacing: 0.2,
   },
-
-  // OR divider
   orDivider: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -880,8 +982,6 @@ const styles = StyleSheet.create({
     color: colors.textDim,
     fontWeight: '500',
   },
-
-  // Remember me row
   rememberRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -908,16 +1008,14 @@ const styles = StyleSheet.create({
   },
   checkboxTick: {
     color: colors.bg,
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: '800',
-    lineHeight: 13,
   },
   rememberText: {
     fontSize: 13,
     color: colors.textSec,
     fontWeight: '500',
   },
-
   forgotText: {
     fontSize: 13,
     color: colors.blue,
@@ -929,8 +1027,6 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: spacing.md,
   },
-
-  // INPUT FIELDS
   inputContainer: {
     marginBottom: spacing.lg,
   },
@@ -951,8 +1047,6 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 14,
   },
-
-  // FEATURE PILLS
   featurePills: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -973,8 +1067,6 @@ const styles = StyleSheet.create({
     color: colors.textSec,
     fontWeight: '500',
   },
-
-  // PRODUCT CARDS
   productCard: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -987,9 +1079,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  productEmoji: {
-    fontSize: 28,
+  productIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
     marginRight: spacing.lg,
+  },
+  productIconText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
   productInfo: {
     flex: 1,
@@ -1013,14 +1114,10 @@ const styles = StyleSheet.create({
   },
   productCheckText: {
     color: colors.bg,
-    fontSize: 14,
+    fontSize: 10,
     fontWeight: '700',
   },
-
-  // SEARCH INPUT
   searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 8,
@@ -1028,18 +1125,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.panel,
     marginBottom: spacing.md,
   },
-  searchIcon: {
-    fontSize: 18,
-    marginRight: spacing.md,
-  },
   searchInput: {
-    flex: 1,
     paddingVertical: 14,
     color: colors.text,
     fontSize: 14,
   },
-
-  // LOCATION SUGGESTIONS
   locationSuggestions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1066,8 +1156,6 @@ const styles = StyleSheet.create({
   locationChipTextSelected: {
     color: colors.blue,
   },
-
-  // MAP PREVIEW
   mapPreview: {
     height: 120,
     backgroundColor: colors.panel,
@@ -1082,16 +1170,10 @@ const styles = StyleSheet.create({
   mapPlaceholder: {
     alignItems: 'center',
   },
-  mapIcon: {
-    fontSize: 28,
-    marginBottom: spacing.sm,
-  },
   mapText: {
     fontSize: 12,
     color: colors.textDim,
   },
-
-  // RADIUS SELECTION
   radiusLabel: {
     fontSize: 12,
     color: colors.textSec,
@@ -1124,56 +1206,6 @@ const styles = StyleSheet.create({
   radiusButtonTextSelected: {
     color: colors.blue,
   },
-
-  // EVENT GRID
-  eventGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.md,
-    marginBottom: spacing.xl,
-  },
-  eventCard: {
-    width: '48%',
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.md,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.panel,
-    alignItems: 'center',
-  },
-  eventCardSelected: {
-    borderColor: colors.blue,
-    backgroundColor: colors.blueDim,
-  },
-  eventEmoji: {
-    fontSize: 28,
-    marginBottom: spacing.sm,
-  },
-  eventLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.text,
-    textAlign: 'center',
-  },
-  checkmark: {
-    position: 'absolute',
-    top: spacing.md,
-    right: spacing.md,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: colors.blue,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  checkmarkText: {
-    color: colors.bg,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-
-  // SUMMARY CARD
   summaryCard: {
     backgroundColor: colors.panel,
     borderWidth: 1,
@@ -1186,10 +1218,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  summarySection: {
-    marginTop: spacing.md,
   },
   summaryLabel: {
     fontSize: 12,
@@ -1206,24 +1234,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
     marginVertical: spacing.md,
   },
-  typePills: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  typePill: {
-    backgroundColor: colors.blueDim,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: 16,
-  },
-  typePillText: {
-    fontSize: 11,
-    color: colors.blue,
-    fontWeight: '600',
-  },
-
   copyrightText: {
     fontSize: 10,
     color: colors.textDim,
@@ -1231,8 +1241,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     letterSpacing: 0.3,
   },
-
-  // FOOTER
   footerText: {
     fontSize: 12,
     color: colors.textDim,
