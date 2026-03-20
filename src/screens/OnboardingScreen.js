@@ -55,7 +55,7 @@ export default function OnboardingScreen() {
 
   const [step, setStep] = useState(0);
   const [authMode, setAuthMode] = useState(null);
-  const [email, setEmail] = useState('example@user.com');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
   const [fullName, setFullName] = useState('');

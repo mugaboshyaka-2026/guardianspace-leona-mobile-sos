@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -38,8 +38,11 @@ const LeonaChatScreen = ({ navigation }) => {
   const { events: myEvents } = useMyEvents();
   const { events: worldEvents } = useWorldEvents();
   const { aois } = useAOIs();
-  const EVENTS = [...myEvents, ...worldEvents];
-  const USER_AOIS = aois.map((a) => a.name || a);
+  const EVENTS = useMemo(
+    () => [...new Map([...myEvents, ...worldEvents].map((event) => [event.id, event])).values()],
+    [myEvents, worldEvents]
+  );
+  const USER_AOIS = useMemo(() => aois.map((a) => a.name || a), [aois]);
 
   // Top-level tabs: CHAT (left) · BRIEFS (right) — equal width
   const sections = [
@@ -71,19 +74,21 @@ const LeonaChatScreen = ({ navigation }) => {
   };
 
   const severityOrder = { critical: 0, high: 1, elevated: 2, monitoring: 3 };
-  const topEvents = [...EVENTS].sort(
-    (a, b) => severityOrder[a.severity] - severityOrder[b.severity]
-  ).slice(0, 5);
-  const myTopEvents = [...myEvents].sort(
-    (a, b) => severityOrder[a.severity] - severityOrder[b.severity]
-  ).slice(0, 5);
+  const topEvents = useMemo(
+    () => [...EVENTS].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]).slice(0, 5),
+    [EVENTS]
+  );
+  const myTopEvents = useMemo(
+    () => [...myEvents].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]).slice(0, 5),
+    [myEvents]
+  );
   const worldThreatScore = Math.min(100, (
     severityCounts.critical * 20 +
     severityCounts.high * 10 +
     severityCounts.elevated * 5 +
     severityCounts.monitoring * 2
   ));
-  const { brief: worldBrief } = useLeonaBrief({
+  const worldBriefContext = useMemo(() => ({
     scope: 'world',
     event_count: EVENTS.length,
     severity_counts: severityCounts,
@@ -93,8 +98,8 @@ const LeonaChatScreen = ({ navigation }) => {
       severity: event.severity,
       location: event.location,
     })),
-  });
-  const { brief: myBrief } = useLeonaBrief({
+  }), [EVENTS.length, severityCounts, topEvents]);
+  const myBriefContext = useMemo(() => ({
     scope: 'my',
     aois: USER_AOIS,
     event_count: myEvents.length,
@@ -105,7 +110,9 @@ const LeonaChatScreen = ({ navigation }) => {
       severity: event.severity,
       location: event.location,
     })),
-  });
+  }), [USER_AOIS, myEvents.length, mySeverityCounts, myTopEvents]);
+  const { brief: worldBrief } = useLeonaBrief(worldBriefContext);
+  const { brief: myBrief } = useLeonaBrief(myBriefContext);
 
   const quickChips = [
     'Critical events',

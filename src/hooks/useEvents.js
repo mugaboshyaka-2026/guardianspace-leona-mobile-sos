@@ -253,6 +253,11 @@ export function useLeonaChat() {
     },
   ]);
   const [sending, setSending] = useState(false);
+  const messagesRef = useRef(messages);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const send = useCallback(async (userText) => {
     const userMsg = { id: Date.now().toString(), type: 'user', text: userText };
@@ -262,7 +267,7 @@ export function useLeonaChat() {
     try {
       // Build messages array for API
       const apiMessages = [
-        ...messages.map((m) => ({
+        ...messagesRef.current.map((m) => ({
           role: m.type === 'agent' ? 'assistant' : 'user',
           content: m.text,
         })),
@@ -285,7 +290,7 @@ export function useLeonaChat() {
     } finally {
       setSending(false);
     }
-  }, [messages]);
+  }, []);
 
   return { messages, sending, send, setMessages };
 }

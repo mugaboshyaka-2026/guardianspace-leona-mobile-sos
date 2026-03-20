@@ -1,13 +1,14 @@
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { setAuthToken } from './api';
-import { initRealtime, disconnectRealtime, onEventUpdate } from './realtime';
-import { initNotifications, notifyRealtimeUpdate } from './notifications';
+import { initRealtime, disconnectRealtime } from './realtime';
 
 const AuthContext = createContext({
   isSignedIn: false,
-  isLoaded: false,
+  isLoaded: true,
   user: null,
-  signOut: () => {},
+  signIn: async () => {},
+  signUp: async () => {},
+  signOut: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -26,21 +27,56 @@ export function AuthProvider({ children }) {
     return <ClerkAuthProvider>{children}</ClerkAuthProvider>;
   }
 
-  console.log('[LEONA Auth] Clerk SDK not found - running in dev/mock mode');
+  return <MockAuthProvider>{children}</MockAuthProvider>;
+}
+
+function MockAuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+
+  const signIn = useCallback(async ({ email }) => {
+    if (!email?.trim()) {
+      throw new Error('Email is required.');
+    }
+
+    setUser({
+      id: 'dev_user',
+      firstName: email.trim().split('@')[0],
+      lastName: '',
+      emailAddresses: [{ emailAddress: email.trim().toLowerCase() }],
+      imageUrl: null,
+    });
+  }, []);
+
+  const signUp = useCallback(async ({ fullName, email }) => {
+    if (!fullName?.trim() || !email?.trim()) {
+      throw new Error('Name and email are required.');
+    }
+
+    const parts = fullName.trim().split(/\s+/);
+    setUser({
+      id: 'dev_user',
+      firstName: parts[0] || '',
+      lastName: parts.slice(1).join(' '),
+      emailAddresses: [{ emailAddress: email.trim().toLowerCase() }],
+      imageUrl: null,
+    });
+  }, []);
+
+  const signOut = useCallback(async () => {
+    setAuthToken(null);
+    disconnectRealtime();
+    setUser(null);
+  }, []);
 
   return (
     <AuthContext.Provider
       value={{
-        isSignedIn: true,
+        isSignedIn: !!user,
         isLoaded: true,
-        user: {
-          id: 'dev_user',
-          firstName: 'Kian',
-          lastName: 'Mirshahi',
-          emailAddresses: [{ emailAddress: 'kian@guardianspace.com' }],
-          imageUrl: null,
-        },
-        signOut: () => {},
+        user,
+        signIn,
+        signUp,
+        signOut,
       }}
     >
       {children}
@@ -75,26 +111,71 @@ function ClerkAuthProvider({ children }) {
 }
 
 function ClerkAuthBridge({ children }) {
-  const { useAuth: useClerkAuth, useUser: useClerkUser } = require('@clerk/clerk-expo');
+  const {
+    useAuth: useClerkAuth,
+    useUser: useClerkUser,
+    useSignIn,
+    useSignUp,
+  } = require('@clerk/clerk-expo');
+
   const { isSignedIn, isLoaded, getToken, signOut } = useClerkAuth();
   const { user } = useClerkUser();
+  const { signIn, setActive: setActiveSignIn, isLoaded: signInLoaded } = useSignIn();
+  const { signUp, setActive: setActiveSignUp, isLoaded: signUpLoaded } = useSignUp();
 
   useEffect(() => {
     if (isSignedIn && getToken) {
       setAuthToken(getToken);
-      initNotifications().catch(() => {});
       initRealtime().catch(() => {});
-      const unsub = onEventUpdate((update) => {
-        notifyRealtimeUpdate(update).catch(() => {});
-      });
-      return () => {
-        unsub();
-      };
+      return;
     }
 
     setAuthToken(null);
     disconnectRealtime();
   }, [isSignedIn, getToken]);
+
+  const performSignIn = useCallback(async ({ email, password }) => {
+    if (!signInLoaded) {
+      throw new Error('Authentication is still loading.');
+    }
+
+    const result = await signIn.create({
+      identifier: email.trim(),
+      password,
+    });
+
+    if (result.status !== 'complete') {
+      throw new Error('Sign-in requires additional verification.');
+    }
+
+    await setActiveSignIn({ session: result.createdSessionId });
+  }, [signIn, signInLoaded, setActiveSignIn]);
+
+  const performSignUp = useCallback(async ({ fullName, email, password }) => {
+    if (!signUpLoaded) {
+      throw new Error('Authentication is still loading.');
+    }
+
+    const nameParts = (fullName || '').trim().split(/\s+/);
+    const result = await signUp.create({
+      emailAddress: email.trim(),
+      password,
+      firstName: nameParts[0] || undefined,
+      lastName: nameParts.slice(1).join(' ') || undefined,
+    });
+
+    if (result.status !== 'complete') {
+      throw new Error('Account created, but Clerk still requires verification before sign-in completes.');
+    }
+
+    await setActiveSignUp({ session: result.createdSessionId });
+  }, [setActiveSignUp, signUp, signUpLoaded]);
+
+  const performSignOut = useCallback(async () => {
+    setAuthToken(null);
+    disconnectRealtime();
+    await signOut();
+  }, [signOut]);
 
   return (
     <AuthContext.Provider
@@ -102,7 +183,9 @@ function ClerkAuthBridge({ children }) {
         isSignedIn: !!isSignedIn,
         isLoaded: !!isLoaded,
         user: user || null,
-        signOut,
+        signIn: performSignIn,
+        signUp: performSignUp,
+        signOut: performSignOut,
       }}
     >
       {children}
