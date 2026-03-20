@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -11,101 +11,28 @@ import {
 import { colors, spacing } from '../theme';
 import { useDataSources } from '../hooks/useEvents';
 
-// Group flat API response into categories for display
 function groupSourcesByCategory(sources) {
   const groups = {};
-  sources.forEach((s) => {
-    const cat = (s.category || s.group || 'OTHER').toUpperCase();
-    if (!groups[cat]) groups[cat] = [];
-    groups[cat].push({
-      name: s.name || s.source_name || 'Unknown',
-      status: s.status || 'Active',
-      lastUpdated: s.last_update || s.lastUpdate || 'N/A',
+  sources.forEach((source) => {
+    const category = (source.category || source.group || 'OTHER').toUpperCase();
+    if (!groups[category]) groups[category] = [];
+    groups[category].push({
+      name: source.name || source.source_name || 'Unknown',
+      status: source.status || 'Unknown',
+      lastUpdated: source.last_update || source.lastUpdate || 'N/A',
     });
   });
   return groups;
 }
 
 const DataSourcesScreen = ({ navigation }) => {
-  // Try to fetch live data sources from API
-  const { sources: liveSources, loading: sourcesLoading } = useDataSources();
-
-  // Fallback hardcoded data when API returns empty
-  const dataSources = liveSources.length > 0
-    ? groupSourcesByCategory(liveSources)
-    : {
-    'SATELLITE IMAGERY': [
-      { name: 'Sentinel-1 SAR', status: 'Active', lastUpdated: '2 min ago' },
-      { name: 'Sentinel-2 MSI', status: 'Active', lastUpdated: '5 min ago' },
-      { name: 'Landsat-9', status: 'Active', lastUpdated: '12 min ago' },
-      { name: 'VIIRS Fire', status: 'Active', lastUpdated: '1 min ago' },
-      { name: 'GOES-16', status: 'Active', lastUpdated: '3 min ago' },
-      { name: 'Himawari-9', status: 'Active', lastUpdated: '8 min ago' },
-      { name: 'Planet Labs', status: 'Degraded', lastUpdated: '45 min ago' },
-      { name: 'MODIS', status: 'Active', lastUpdated: '6 min ago' },
-    ],
-    'METEOROLOGICAL': [
-      { name: 'ECMWF GFS', status: 'Active', lastUpdated: '15 min ago' },
-      { name: 'NOAA GFS', status: 'Active', lastUpdated: '12 min ago' },
-      { name: 'EUMETNET', status: 'Active', lastUpdated: '10 min ago' },
-      { name: 'JMA', status: 'Active', lastUpdated: '18 min ago' },
-      { name: 'IMD', status: 'Active', lastUpdated: '22 min ago' },
-      { name: 'BOM Australia', status: 'Delayed', lastUpdated: '1 hour ago' },
-      { name: 'CMA China', status: 'Active', lastUpdated: '20 min ago' },
-    ],
-    'SEISMIC': [
-      { name: 'USGS ShakeMap', status: 'Active', lastUpdated: '2 min ago' },
-      { name: 'EMSC', status: 'Active', lastUpdated: '1 min ago' },
-      { name: 'JMA Seismic', status: 'Active', lastUpdated: '3 min ago' },
-      { name: 'GeoNet NZ', status: 'Active', lastUpdated: '4 min ago' },
-      { name: 'IRIS', status: 'Active', lastUpdated: '2 min ago' },
-    ],
-    'HUMANITARIAN': [
-      { name: 'OCHA ReliefWeb', status: 'Active', lastUpdated: '30 min ago' },
-      { name: 'UNHCR', status: 'Active', lastUpdated: '45 min ago' },
-      { name: 'WFP VAM', status: 'Active', lastUpdated: '1 hour ago' },
-      { name: 'FEWS NET', status: 'Active', lastUpdated: '2 hours ago' },
-      { name: 'IPC Analysis', status: 'Delayed', lastUpdated: '3 hours ago' },
-      { name: 'WHO HealthMap', status: 'Active', lastUpdated: '25 min ago' },
-    ],
-    'CONFLICT & SECURITY': [
-      { name: 'ACLED', status: 'Active', lastUpdated: '5 min ago' },
-      { name: 'GDELT', status: 'Active', lastUpdated: '2 min ago' },
-      { name: 'Uppsala UCDP', status: 'Active', lastUpdated: '1 day ago' },
-      { name: 'ICG CrisisWatch', status: 'Active', lastUpdated: '6 hours ago' },
-      { name: 'SIPRI', status: 'Active', lastUpdated: '12 hours ago' },
-    ],
-    'HYDROLOGICAL': [
-      { name: 'GloFAS', status: 'Active', lastUpdated: '10 min ago' },
-      { name: 'GRDC', status: 'Active', lastUpdated: '2 hours ago' },
-      { name: 'Dartmouth Flood', status: 'Active', lastUpdated: '8 min ago' },
-      { name: 'SWOT', status: 'Active', lastUpdated: '30 min ago' },
-      { name: 'HydroSOS', status: 'Degraded', lastUpdated: '2 hours ago' },
-    ],
-    'CROWDSOURCED': [
-      { name: 'Ushahidi', status: 'Active', lastUpdated: '3 min ago' },
-      { name: 'HOT OSM', status: 'Active', lastUpdated: '8 min ago' },
-      { name: 'Surety AI', status: 'Active', lastUpdated: '1 min ago' },
-      { name: 'Social Pulse', status: 'Active', lastUpdated: '2 min ago' },
-      { name: 'Citizen Reports', status: 'Active', lastUpdated: '4 min ago' },
-      { name: 'Media Scanner', status: 'Active', lastUpdated: '1 min ago' },
-    ],
-    'OTHER': [
-      { name: 'GDACS', status: 'Active', lastUpdated: '7 min ago' },
-      { name: 'PDC DisasterAWARE', status: 'Active', lastUpdated: '5 min ago' },
-      { name: 'INFORM Index', status: 'Active', lastUpdated: '1 day ago' },
-      { name: 'EM-DAT', status: 'Active', lastUpdated: '3 days ago' },
-      { name: 'NASA EONET', status: 'Active', lastUpdated: '10 min ago' },
-    ],
-  };  // end of fallback ternary
-
-  const countActiveFeedsAndTypes = () => {
-    let activeCount = 0;
-    Object.values(dataSources).forEach((category) => {
-      activeCount += category.filter((f) => f.status === 'Active').length;
-    });
-    return activeCount;
-  };
+  const { sources: liveSources, loading, error } = useDataSources();
+  const dataSources = groupSourcesByCategory(liveSources);
+  const categoryCount = Object.keys(dataSources).length;
+  const activeCount = Object.values(dataSources).reduce(
+    (total, feeds) => total + feeds.filter((feed) => feed.status === 'Active').length,
+    0
+  );
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -132,7 +59,7 @@ const DataSourcesScreen = ({ navigation }) => {
 
       <View style={styles.summary}>
         <Text style={styles.summaryText}>
-          47 Active Feeds · 21 Event Types
+          {activeCount} Active Feeds · {categoryCount} Source Groups
         </Text>
       </View>
 
@@ -141,7 +68,23 @@ const DataSourcesScreen = ({ navigation }) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {Object.entries(dataSources).map(([category, feeds]) => (
+        {loading && <ActivityIndicator color={colors.blue} style={styles.loadingIndicator} />}
+
+        {!loading && error && (
+          <EmptyState
+            title="Unable to load data sources"
+            subtitle="The backend did not return a live source list."
+          />
+        )}
+
+        {!loading && !error && categoryCount === 0 && (
+          <EmptyState
+            title="No live data sources"
+            subtitle="The API returned an empty source list."
+          />
+        )}
+
+        {!loading && !error && Object.entries(dataSources).map(([category, feeds]) => (
           <View key={category} style={styles.categorySection}>
             <Text style={styles.categoryHeader}>{category}</Text>
             {feeds.map((feed, index) => (
@@ -160,16 +103,18 @@ const DataSourcesScreen = ({ navigation }) => {
   );
 };
 
+const EmptyState = ({ title, subtitle }) => (
+  <View style={styles.emptyState}>
+    <Text style={styles.emptyStateTitle}>{title}</Text>
+    <Text style={styles.emptyStateSubtitle}>{subtitle}</Text>
+  </View>
+);
+
 const FeedRow = ({ name, status, lastUpdated, statusColor }) => (
   <View style={styles.feedRow}>
     <View style={styles.feedInfo}>
       <View style={styles.feedNameRow}>
-        <View
-          style={[
-            styles.statusDot,
-            { backgroundColor: statusColor },
-          ]}
-        />
+        <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
         <Text style={styles.feedName}>{name}</Text>
         <View style={styles.statusBadge}>
           <Text style={styles.statusBadgeText}>{status}</Text>
@@ -224,6 +169,24 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.lg,
+  },
+  loadingIndicator: {
+    paddingVertical: spacing.xl,
+  },
+  emptyState: {
+    paddingVertical: spacing.xl,
+    alignItems: 'center',
+  },
+  emptyStateTitle: {
+    fontSize: 15,
+    color: colors.text,
+    fontWeight: '600',
+    marginBottom: spacing.xs,
+  },
+  emptyStateSubtitle: {
+    fontSize: 12,
+    color: colors.textSec,
+    textAlign: 'center',
   },
   categorySection: {
     marginBottom: spacing.xl,

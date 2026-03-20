@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useContext, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,25 +10,42 @@ import {
 import { colors, spacing } from '../theme';
 import { useAuth } from '../lib/auth';
 import { useProfile } from '../hooks/useEvents';
+import { AppContext } from '../../App';
 
 const ProfileScreen = ({ navigation }) => {
   const [copied, setCopied] = useState(false);
   const { user: clerkUser, signOut } = useAuth();
   const { profile: apiProfile } = useProfile();
+  const { userConfig, handleLogout } = useContext(AppContext);
 
-  // Merge Clerk user + API profile, fallback to hardcoded
-  const displayName = apiProfile?.name || clerkUser?.firstName
-    ? `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim()
-    : 'Kian Mirshahi';
-  const displayEmail = apiProfile?.email
-    || clerkUser?.emailAddresses?.[0]?.emailAddress
-    || 'kian@guardianspace.com';
-  const displayOrg = apiProfile?.org_name || 'Guardian Space Inc.';
-  const displayInitials = displayName.split(' ').map(n => n[0]).join('').toUpperCase();
+  const clerkName = `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim();
+  const displayName = clerkName || apiProfile?.name || userConfig?.fullName || 'Profile';
+  const displayEmail =
+    clerkUser?.primaryEmailAddress?.emailAddress ||
+    clerkUser?.emailAddresses?.[0]?.emailAddress ||
+    apiProfile?.email ||
+    userConfig?.email ||
+    '';
+  const displayOrg = apiProfile?.org_name || userConfig?.organization || 'Guardian Space Inc.';
+  const displayInitials = useMemo(() => {
+    const parts = displayName.split(' ').filter(Boolean);
+    if (parts.length === 0) return 'U';
+    return parts.slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+  }, [displayName]);
 
   const copyToClipboard = () => {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSignOut = async () => {
+    try {
+      if (signOut) {
+        await signOut();
+      }
+    } finally {
+      handleLogout();
+    }
   };
 
   return (
@@ -113,7 +130,7 @@ const ProfileScreen = ({ navigation }) => {
           <ChevronRow label="Change Password" />
           <ToggleRow label="Two-Factor Auth" initialValue={true} />
           <InfoRow label="Active Sessions" value="3 devices" />
-          <TouchableOpacity style={styles.signOutButton} onPress={signOut}>
+          <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
             <Text style={styles.signOutText}>Sign Out</Text>
           </TouchableOpacity>
         </View>

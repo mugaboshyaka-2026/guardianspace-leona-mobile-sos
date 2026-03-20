@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect } from 'react';
 import { setAuthToken } from './api';
-import { initRealtime, disconnectRealtime } from './realtime';
+import { initRealtime, disconnectRealtime, onEventUpdate } from './realtime';
+import { initNotifications, notifyRealtimeUpdate } from './notifications';
 
 const AuthContext = createContext({
   isSignedIn: false,
@@ -81,8 +82,14 @@ function ClerkAuthBridge({ children }) {
   useEffect(() => {
     if (isSignedIn && getToken) {
       setAuthToken(getToken);
+      initNotifications().catch(() => {});
       initRealtime().catch(() => {});
-      return;
+      const unsub = onEventUpdate((update) => {
+        notifyRealtimeUpdate(update).catch(() => {});
+      });
+      return () => {
+        unsub();
+      };
     }
 
     setAuthToken(null);

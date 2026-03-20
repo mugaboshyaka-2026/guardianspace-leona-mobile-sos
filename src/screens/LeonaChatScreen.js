@@ -21,6 +21,11 @@ import LeonaHeader from '../components/LeonaHeader';
 const leonaAvatar = require('../assets/leona-avatar.png');
 const { width } = Dimensions.get('window');
 
+function extractBriefText(brief) {
+  if (!brief) return '';
+  return brief.brief || brief.summary || brief.text || brief.content || '';
+}
+
 const LeonaChatScreen = ({ navigation }) => {
   const [activeSection, setActiveSection] = useState('CHAT');
   const [activeBriefTab, setActiveBriefTab] = useState('MY');   // 'MY' | 'WORLD'
@@ -58,11 +63,49 @@ const LeonaChatScreen = ({ navigation }) => {
     elevated: EVENTS.filter((e) => e.severity === 'elevated').length,
     monitoring: EVENTS.filter((e) => e.severity === 'monitoring').length,
   };
+  const mySeverityCounts = {
+    critical: myEvents.filter((e) => e.severity === 'critical').length,
+    high: myEvents.filter((e) => e.severity === 'high').length,
+    elevated: myEvents.filter((e) => e.severity === 'elevated').length,
+    monitoring: myEvents.filter((e) => e.severity === 'monitoring').length,
+  };
 
   const severityOrder = { critical: 0, high: 1, elevated: 2, monitoring: 3 };
   const topEvents = [...EVENTS].sort(
     (a, b) => severityOrder[a.severity] - severityOrder[b.severity]
   ).slice(0, 5);
+  const myTopEvents = [...myEvents].sort(
+    (a, b) => severityOrder[a.severity] - severityOrder[b.severity]
+  ).slice(0, 5);
+  const worldThreatScore = Math.min(100, (
+    severityCounts.critical * 20 +
+    severityCounts.high * 10 +
+    severityCounts.elevated * 5 +
+    severityCounts.monitoring * 2
+  ));
+  const { brief: worldBrief } = useLeonaBrief({
+    scope: 'world',
+    event_count: EVENTS.length,
+    severity_counts: severityCounts,
+    events: topEvents.map((event) => ({
+      id: event.id,
+      title: event.title,
+      severity: event.severity,
+      location: event.location,
+    })),
+  });
+  const { brief: myBrief } = useLeonaBrief({
+    scope: 'my',
+    aois: USER_AOIS,
+    event_count: myEvents.length,
+    severity_counts: mySeverityCounts,
+    events: myTopEvents.map((event) => ({
+      id: event.id,
+      title: event.title,
+      severity: event.severity,
+      location: event.location,
+    })),
+  });
 
   const quickChips = [
     'Critical events',
@@ -307,7 +350,12 @@ const LeonaChatScreen = ({ navigation }) => {
           <View style={styles.headerRight}>
             <TouchableOpacity
               style={styles.videoCallBtn}
-              onPress={() => setIsVideoCall(true)}
+              onPress={() => navigation.navigate('Call', {
+                channelName: 'leona-direct',
+                callType: 'video',
+                threadName: 'LEONA',
+                participants: ['LEONA'],
+              })}
             >
               <Text style={styles.videoCallBtnIcon}>⬛</Text>
               <Text style={styles.videoCallBtnText}>VIDEO</Text>

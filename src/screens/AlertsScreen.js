@@ -34,8 +34,8 @@ const AlertsScreen = ({ navigation }) => {
   const [activeTab, setActiveTab] = useState('MY');
 
   // ── Live API data ──
-  const { events: myAlerts, loading: myLoading } = useMyEvents();
-  const { events: worldEvents, loading: worldLoading } = useWorldEvents();
+  const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents();
+  const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents();
   const globalEvents = useMemo(() => {
     const myIds = new Set(myAlerts.map((e) => e.id));
     return worldEvents.filter((e) => !myIds.has(e.id));
@@ -62,6 +62,17 @@ const AlertsScreen = ({ navigation }) => {
   useEffect(() => {
     if (activeTab === 'FAVORITES') loadFavorites();
   }, [activeTab, loadFavorites]);
+
+  const isLoading = activeTab === 'MY'
+    ? myLoading
+    : activeTab === 'GLOBAL'
+      ? worldLoading
+      : favLoading;
+  const activeError = activeTab === 'MY'
+    ? myError
+    : activeTab === 'GLOBAL'
+      ? worldError
+      : null;
 
   const currentEvents = activeTab === 'MY' ? myAlerts
     : activeTab === 'GLOBAL' ? globalEvents
@@ -166,7 +177,17 @@ const AlertsScreen = ({ navigation }) => {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {grouped.map((section) => (
+          {isLoading && (
+            <ActivityIndicator color={colors.blue} style={styles.loadingIndicator} />
+          )}
+
+          {!isLoading && activeError && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>Unable to load alerts right now</Text>
+            </View>
+          )}
+
+          {!isLoading && !activeError && grouped.map((section) => (
             <View key={section.key} style={styles.section}>
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionTitleRow}>
@@ -183,7 +204,7 @@ const AlertsScreen = ({ navigation }) => {
             </View>
           ))}
 
-          {grouped.length === 0 && (
+          {!isLoading && !activeError && grouped.length === 0 && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>No alerts in this category</Text>
             </View>
@@ -329,6 +350,7 @@ const styles = StyleSheet.create({
   alertTime: { color: colors.textDim, fontSize: 10, fontWeight: '500' },
   emptyState: { paddingVertical: 60, alignItems: 'center', gap: 8 },
   emptyText: { color: colors.textDim, fontSize: 13 },
+  loadingIndicator: { paddingVertical: 40 },
   bottomSpacer: { height: spacing.xl },
 
   // Favorites tab inner (star + label)

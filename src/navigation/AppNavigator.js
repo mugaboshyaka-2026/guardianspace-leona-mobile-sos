@@ -18,6 +18,7 @@ import DataSourcesScreen from '../screens/DataSourcesScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SubscriptionScreen from '../screens/SubscriptionScreen';
 import CallScreen from '../screens/CallScreen';
+import { useMyEvents } from '../hooks/useEvents';
 
 // LEONA avatar image
 const leonaAvatar = require('../assets/leona-avatar.png');
@@ -44,6 +45,7 @@ const AlertsStack = () => (
 const LeonaStack = () => (
   <Stack.Navigator screenOptions={screenOpts}>
     <Stack.Screen name="LeonaChat" component={LeonaChatScreen} />
+    <Stack.Screen name="Call" component={CallScreen} />
   </Stack.Navigator>
 );
 
@@ -171,6 +173,9 @@ const LeonaTabButton = ({ onPress, accessibilityState }) => {
 };
 
 export const AppNavigator = () => {
+  const { events: myEvents } = useMyEvents();
+  const alertsBadge = myEvents.length > 0 ? myEvents.length : undefined;
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -195,7 +200,7 @@ export const AppNavigator = () => {
         component={AlertsStack}
         options={{
           title: 'ALERTS',
-          tabBarBadge: 3,
+          tabBarBadge: alertsBadge,
           tabBarBadgeStyle: styles.badge,
           tabBarIcon: ({ color, focused }) => <TabIcon label="ALERTS" color={color} focused={focused} />,
         }}
@@ -213,8 +218,6 @@ export const AppNavigator = () => {
         component={CommunityStack}
         options={{
           title: 'FEED',
-          tabBarBadge: 5,
-          tabBarBadgeStyle: styles.feedBadge,
           tabBarIcon: ({ color, focused }) => <SonarIcon color={color} focused={focused} />,
         }}
       />
