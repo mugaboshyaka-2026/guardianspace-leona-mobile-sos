@@ -296,6 +296,7 @@ export function useLeonaChat() {
 export function useLeonaBrief(context) {
   const [brief, setBrief] = useState(null);
   const [loading, setLoading] = useState(true);
+  const contextKey = JSON.stringify(context ?? null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -308,7 +309,7 @@ export function useLeonaBrief(context) {
     } finally {
       setLoading(false);
     }
-  }, [context]);
+  }, [contextKey]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
