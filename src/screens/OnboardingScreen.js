@@ -104,11 +104,12 @@ export default function OnboardingScreen() {
     Alert.alert('Authentication error', message);
   };
 
-  const showAuthorizedPartyHelp = (clientTrustState) => {
+  const showAuthorizedPartyHelp = (status, clientTrustState) => {
+    const statusLine = status ? `Status: ${status}.` : '';
     const trustLine = clientTrustState ? `Client trust state: ${clientTrustState}.` : '';
     Alert.alert(
       'Clerk configuration required',
-      `This mobile app is not yet allowed as an authorized client. ${trustLine} Add "space.guardian.pro" to Clerk Authorized Parties, or relax the azp check for native clients, then try signing in again.`
+      `This mobile app is not yet allowed as an authorized client. ${statusLine} ${trustLine} Add "space.guardian.pro" to Clerk Authorized Parties, or relax the azp check for native clients, then try signing in again.`
     );
   };
 
@@ -129,7 +130,17 @@ export default function OnboardingScreen() {
     return factors[0]?.strategy || null;
   };
 
+  const getSignInFuture = () => signIn?.__internal_future;
+
   const getVerificationCopy = () => {
+    if (verificationMode === 'client_trust_email_code') {
+      return {
+        title: 'Verify this device',
+        subtitle: `Enter the code Clerk sent to ${email}.`,
+        buttonLabel: 'VERIFY DEVICE',
+      };
+    }
+
     if (verificationMode === 'signin_second_factor') {
       const strategyLabel = secondFactorStrategy === 'email_code'
         ? `Enter the code sent to ${email}.`
@@ -194,7 +205,21 @@ export default function OnboardingScreen() {
       }
 
       if (result.status === 'needs_client_trust') {
-        showAuthorizedPartyHelp(result.clientTrustState);
+        const signInFuture = getSignInFuture();
+        if (!signInFuture?.sendEmailCode) {
+          showAuthorizedPartyHelp(result.status, result.clientTrustState);
+          return;
+        }
+
+        const sendResult = await signInFuture.sendEmailCode();
+        if (sendResult?.error) {
+          showClerkError(sendResult.error, 'Unable to send the device verification code.');
+          return;
+        }
+
+        setVerificationMode('client_trust_email_code');
+        setVerificationCode('');
+        setStep(4);
         return;
       }
 
@@ -253,6 +278,49 @@ export default function OnboardingScreen() {
   };
 
   const handleVerifyEmail = async () => {
+    if (verificationMode === 'client_trust_email_code') {
+      const signInFuture = getSignInFuture();
+      if (!signInFuture?.verifyEmailCode || !signInFuture?.finalize) {
+        Alert.alert('Verification unavailable', 'This Clerk SDK does not expose the client-trust verification flow.');
+        return;
+      }
+      if (!verificationCode.trim()) {
+        Alert.alert('Verification code required', 'Enter the code sent to your email.');
+        return;
+      }
+
+      setSubmittingAuth(true);
+      try {
+        const verifyResult = await signInFuture.verifyEmailCode({ code: verificationCode.trim() });
+        if (verifyResult?.error) {
+          showClerkError(verifyResult.error, 'Unable to verify this device.');
+          return;
+        }
+
+        const finalizeResult = await signInFuture.finalize();
+        if (finalizeResult?.error) {
+          showClerkError(finalizeResult.error, 'Unable to finalize sign-in for this device.');
+          return;
+        }
+
+        const finalizedSessionId = signInFuture.createdSessionId || signIn?.createdSessionId;
+        if (!finalizedSessionId) {
+          Alert.alert('Verification incomplete', 'Clerk did not return a session after device verification.');
+          return;
+        }
+
+        await setActive({ session: finalizedSessionId });
+        setVerificationMode(null);
+        setVerificationCode('');
+        setStep(2);
+      } catch (error) {
+        showClerkError(error, 'Unable to verify this device.');
+      } finally {
+        setSubmittingAuth(false);
+      }
+      return;
+    }
+
     if (verificationMode === 'signin_second_factor') {
       if (!signInLoaded || !secondFactorStrategy) {
         Alert.alert('Please wait', 'Authentication is still loading.');
