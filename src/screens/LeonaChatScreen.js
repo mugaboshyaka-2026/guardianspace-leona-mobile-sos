@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useContext } from 'react';
 import {
   View,
   StyleSheet,
@@ -18,6 +18,8 @@ import {
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents, useAOIs, useLeonaChat, useLeonaBrief } from '../hooks/useEvents';
 import LeonaHeader from '../components/LeonaHeader';
+import { AppContext } from '../../App';
+import { getProductConfig, limitEventsForProduct } from '../lib/products';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 const { width } = Dimensions.get('window');
@@ -28,6 +30,8 @@ function extractBriefText(brief) {
 }
 
 const LeonaChatScreen = ({ navigation }) => {
+  const { userConfig } = useContext(AppContext);
+  const productConfig = getProductConfig(userConfig?.product);
   const [activeSection, setActiveSection] = useState('CHAT');
   const [activeBriefTab, setActiveBriefTab] = useState('MY');   // 'MY' | 'WORLD'
   const [isVideoCall, setIsVideoCall] = useState(false);
@@ -50,8 +54,11 @@ const LeonaChatScreen = ({ navigation }) => {
   const { events: worldEvents } = useWorldEvents();
   const { aois } = useAOIs();
   const EVENTS = useMemo(
-    () => [...new Map([...myEvents, ...worldEvents].map((event) => [event.id, event])).values()],
-    [myEvents, worldEvents]
+    () => limitEventsForProduct(
+      [...new Map([...myEvents, ...worldEvents].map((event) => [event.id, event])).values()],
+      userConfig?.product
+    ),
+    [myEvents, userConfig?.product, worldEvents]
   );
   const USER_AOIS = useMemo(() => aois.map((a) => a.name || a), [aois]);
 
@@ -417,7 +424,8 @@ const LeonaChatScreen = ({ navigation }) => {
         right={
           <View style={styles.headerRight}>
             <TouchableOpacity
-              style={styles.videoCallBtn}
+              style={[styles.videoCallBtn, !productConfig.canUseVideoAgent && styles.videoCallBtnDisabled]}
+              disabled={!productConfig.canUseVideoAgent}
               onPress={() => navigation.navigate('Call', {
                 channelName: 'leona-direct',
                 callType: 'video',
@@ -426,7 +434,7 @@ const LeonaChatScreen = ({ navigation }) => {
               })}
             >
               <Text style={styles.videoCallBtnIcon}>⬛</Text>
-              <Text style={styles.videoCallBtnText}>VIDEO</Text>
+              <Text style={styles.videoCallBtnText}>{productConfig.canUseVideoAgent ? 'VIDEO' : 'VIDEO LOCKED'}</Text>
             </TouchableOpacity>
             <View style={styles.monitoringRow}>
               <View style={styles.greenDot} />
@@ -552,6 +560,9 @@ const styles = StyleSheet.create({
     borderRadius: 100,
     paddingHorizontal: 10,
     paddingVertical: 4,
+  },
+  videoCallBtnDisabled: {
+    opacity: 0.45,
   },
   videoCallBtnIcon: {
     fontSize: 9,

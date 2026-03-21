@@ -13,6 +13,7 @@ import LeonaHeader from '../components/LeonaHeader';
 import { useAuth } from '../lib/auth';
 import { useProfile } from '../hooks/useEvents';
 import { AppContext } from '../../App';
+import { getProductConfig } from '../lib/products';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 
@@ -20,6 +21,7 @@ const MoreScreen = ({ navigation }) => {
   const { user: clerkUser } = useAuth();
   const { profile: apiProfile } = useProfile();
   const { userConfig } = useContext(AppContext);
+  const productConfig = getProductConfig(userConfig?.product);
   const clerkName = `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim();
   const displayName = clerkName || apiProfile?.name || userConfig?.fullName || 'Profile';
   const displayOrg = apiProfile?.org_name || userConfig?.organization || 'Guardian Space Inc.';
@@ -57,7 +59,7 @@ const MoreScreen = ({ navigation }) => {
           activeOpacity={0.7}
         >
           <View style={styles.planDot} />
-          <Text style={styles.planLabel}>Enterprise Plan</Text>
+          <Text style={styles.planLabel}>{productConfig.label}</Text>
           <Text style={styles.planSep}>·</Text>
           <Text style={styles.planDetail}>{displayOrg}</Text>
           <Text style={styles.planChevron}>›</Text>
@@ -68,7 +70,18 @@ const MoreScreen = ({ navigation }) => {
         style={styles.scrollArea}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
-      />
+      >
+        <View style={styles.capabilityCard}>
+          <Text style={styles.capabilityTitle}>PLAN ACCESS</Text>
+          <Text style={styles.capabilityBody}>{productConfig.description}</Text>
+          <Text style={styles.capabilityItem}>Community Feed: {productConfig.canUseCommunity ? 'Enabled' : 'Locked'}</Text>
+          <Text style={styles.capabilityItem}>Agent Video: {productConfig.canUseVideoAgent ? 'Enabled' : 'Locked'}</Text>
+          <Text style={styles.capabilityItem}>
+            Visible Event Limit: {productConfig.maxVisibleEvents ? String(productConfig.maxVisibleEvents) : 'Unlimited'}
+          </Text>
+          <Text style={styles.capabilityItem}>Map Layers: {productConfig.enabledMapLayers.length}</Text>
+        </View>
+      </ScrollView>
 
       <View style={styles.footer}>
         <Image source={leonaAvatar} style={styles.footerAvatar} />
@@ -187,6 +200,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
     paddingBottom: spacing.xl,
+  },
+  capabilityCard: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: spacing.lg,
+  },
+  capabilityTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: spacing.sm,
+  },
+  capabilityBody: {
+    color: colors.textSec,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: spacing.md,
+  },
+  capabilityItem: {
+    color: colors.text,
+    fontSize: 13,
+    marginBottom: spacing.sm,
   },
   footer: {
     alignItems: 'center',

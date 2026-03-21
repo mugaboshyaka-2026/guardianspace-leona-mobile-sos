@@ -14,6 +14,7 @@ import { fetchMyFavorites } from '../lib/api';
 import LeonaHeader from '../components/LeonaHeader';
 import { AppContext } from '../../App';
 import { filterEventsForConfig } from '../lib/locality';
+import { limitEventsForProduct } from '../lib/products';
 
 // Helper: "2d ago", "1w ago", etc.
 function getTimeSince(dateStr) {
@@ -48,12 +49,18 @@ const AlertsScreen = ({ navigation }) => {
   const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents();
   const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents();
   const filteredMyAlerts = useMemo(
-    () => filterEventsForConfig(myAlerts.length > 0 ? myAlerts : worldEvents, userConfig, 'local'),
+    () => limitEventsForProduct(
+      filterEventsForConfig(myAlerts.length > 0 ? myAlerts : worldEvents, userConfig, 'local'),
+      userConfig?.product
+    ),
     [myAlerts, userConfig, worldEvents]
   );
   const globalEvents = useMemo(() => {
     const myIds = new Set(filteredMyAlerts.map((e) => e.id));
-    return filterEventsForConfig(worldEvents, userConfig, 'global').filter((e) => !myIds.has(e.id));
+    return limitEventsForProduct(
+      filterEventsForConfig(worldEvents, userConfig, 'global').filter((e) => !myIds.has(e.id)),
+      userConfig?.product
+    );
   }, [filteredMyAlerts, userConfig, worldEvents]);
 
   // ── Favorites ──

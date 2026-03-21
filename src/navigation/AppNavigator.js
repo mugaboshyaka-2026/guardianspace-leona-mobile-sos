@@ -22,6 +22,7 @@ import { useMyEvents } from '../hooks/useEvents';
 import { useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
 import { filterEventsForConfig } from '../lib/locality';
+import { getProductConfig, limitEventsForProduct } from '../lib/products';
 
 // LEONA avatar image
 const leonaAvatar = require('../assets/leona-avatar.png');
@@ -177,10 +178,14 @@ const LeonaTabButton = ({ onPress, accessibilityState }) => {
 
 export const AppNavigator = () => {
   const { userConfig } = useContext(AppContext);
+  const productConfig = getProductConfig(userConfig?.product);
   const { events: myEvents } = useMyEvents();
   const { events: worldEvents } = useWorldEvents();
   const filteredMyEvents = useMemo(
-    () => filterEventsForConfig(myEvents.length > 0 ? myEvents : worldEvents, userConfig, 'local'),
+    () => limitEventsForProduct(
+      filterEventsForConfig(myEvents.length > 0 ? myEvents : worldEvents, userConfig, 'local'),
+      userConfig?.product
+    ),
     [myEvents, userConfig, worldEvents]
   );
   const alertsBadge = filteredMyEvents.length > 0 ? filteredMyEvents.length : undefined;
@@ -222,14 +227,16 @@ export const AppNavigator = () => {
           tabBarButton: (props) => <LeonaTabButton {...props} />,
         }}
       />
-      <Tab.Screen
-        name="CommunityTab"
-        component={CommunityStack}
-        options={{
-          title: 'FEED',
-          tabBarIcon: ({ color, focused }) => <SonarIcon color={color} focused={focused} />,
-        }}
-      />
+      {productConfig.canUseCommunity && (
+        <Tab.Screen
+          name="CommunityTab"
+          component={CommunityStack}
+          options={{
+            title: 'FEED',
+            tabBarIcon: ({ color, focused }) => <SonarIcon color={color} focused={focused} />,
+          }}
+        />
+      )}
       <Tab.Screen
         name="MoreTab"
         component={MoreStack}

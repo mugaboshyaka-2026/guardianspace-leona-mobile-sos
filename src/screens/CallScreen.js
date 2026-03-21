@@ -21,6 +21,7 @@ import {
   StatusBar,
   Platform,
   Dimensions,
+  Alert,
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import * as WebBrowser from 'expo-web-browser';
@@ -31,6 +32,7 @@ import {
 } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { AppContext } from '../../App';
+import { getProductConfig } from '../lib/products';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -109,6 +111,7 @@ const CallScreen = ({ navigation, route }) => {
   } = route.params || {};
   const { user } = useAuth();
   const { userConfig } = useContext(AppContext);
+  const productConfig = getProductConfig(userConfig?.product);
 
   const isVideo = callType === 'video';
   const currentUserIdentity = useMemo(() => {
@@ -260,6 +263,12 @@ const CallScreen = ({ navigation, route }) => {
   }, [callType, channelName, currentUserIdentity, hydrateConversation, isVideo, participants, threadName]);
 
   useEffect(() => {
+    if (isVideo && !productConfig.canUseVideoAgent) {
+      Alert.alert('Plan upgrade required', 'Video agent access is not available on your current plan.');
+      navigation.goBack();
+      return undefined;
+    }
+
     if (isVideo) {
       bootstrapConversation();
     } else {
@@ -269,7 +278,7 @@ const CallScreen = ({ navigation, route }) => {
     return () => {
       clearInterval(timerRef.current);
     };
-  }, [bootstrapConversation, isVideo, markConnected]);
+  }, [bootstrapConversation, isVideo, markConnected, navigation, productConfig.canUseVideoAgent]);
 
   const endCall = useCallback(() => {
     clearInterval(timerRef.current);

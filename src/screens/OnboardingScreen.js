@@ -20,6 +20,7 @@ import { AppContext } from '../../App';
 import { addAOI, fetchMyAOIs } from '../lib/api';
 import { resetEventCache } from '../hooks/useEvents';
 import { getLocationCoordinates, getLocationMetadata } from '../lib/locality';
+import { PRODUCT_CONFIGS } from '../lib/products';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 const leonaBadge = require('../assets/leona-badge.png');
@@ -27,27 +28,9 @@ const leonaBadge = require('../assets/leona-badge.png');
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const PRODUCTS = [
-  {
-    id: 'guardian_pro',
-    label: 'Guardian Pro',
-    desc: 'Enterprise, EMS & Law Enforcement',
-    icon: 'HQ',
-    accent: colors.blue,
-  },
-  {
-    id: 'event360',
-    label: 'EVENT 360',
-    desc: 'Insurance & Claims Processing',
-    icon: 'EV',
-    accent: '#FF9800',
-  },
-  {
-    id: 'guardian',
-    label: 'Guardian',
-    desc: 'Personal & Family Safety',
-    icon: 'GS',
-    accent: colors.purple,
-  },
+  { id: 'leona_plus', label: PRODUCT_CONFIGS.leona_plus.label, desc: PRODUCT_CONFIGS.leona_plus.description, icon: 'LP', accent: PRODUCT_CONFIGS.leona_plus.accent },
+  { id: 'leona_pro', label: PRODUCT_CONFIGS.leona_pro.label, desc: PRODUCT_CONFIGS.leona_pro.description, icon: 'PR', accent: PRODUCT_CONFIGS.leona_pro.accent },
+  { id: 'leona_enterprise', label: PRODUCT_CONFIGS.leona_enterprise.label, desc: PRODUCT_CONFIGS.leona_enterprise.description, icon: 'EN', accent: PRODUCT_CONFIGS.leona_enterprise.accent },
 ];
 
 const DEFAULT_AOI_SUGGESTIONS = [
@@ -88,7 +71,7 @@ export default function OnboardingScreen() {
   const [verificationMode, setVerificationMode] = useState(null);
   const [secondFactorStrategy, setSecondFactorStrategy] = useState(null);
   const [submittingAuth, setSubmittingAuth] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState('guardian_pro');
+  const [selectedProduct, setSelectedProduct] = useState('leona_plus');
   const [location, setLocation] = useState('');
   const [selectedAois, setSelectedAois] = useState([]);
   const [existingAois, setExistingAois] = useState([]);
