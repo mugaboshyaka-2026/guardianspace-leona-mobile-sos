@@ -134,6 +134,11 @@ const CommunityScreen = ({ navigation }) => {
     </View>
   );
 
+  const handleUpload = (type) => {
+    // TODO: wire to expo-image-picker / expo-document-picker
+    console.log(`[LEONA Community] Upload ${type} pressed`);
+  };
+
   const renderFeed = () => (
     <>
       {/* Compose prompt */}
@@ -146,6 +151,26 @@ const CommunityScreen = ({ navigation }) => {
           <Text style={styles.composePromptBtnText}>POST</Text>
         </View>
       </TouchableOpacity>
+
+      {/* Upload buttons */}
+      <View style={styles.uploadBar}>
+        <TouchableOpacity style={styles.uploadBtn} onPress={() => handleUpload('photo')}>
+          <Text style={styles.uploadIcon}>🖼</Text>
+          <Text style={styles.uploadText}>Photo</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.uploadBtn} onPress={() => handleUpload('video')}>
+          <Text style={styles.uploadIcon}>🎥</Text>
+          <Text style={styles.uploadText}>Video</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.uploadBtn} onPress={() => handleUpload('pdf')}>
+          <Text style={styles.uploadIcon}>📄</Text>
+          <Text style={styles.uploadText}>PDF</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.uploadBtn} onPress={() => handleUpload('file')}>
+          <Text style={styles.uploadIcon}>📎</Text>
+          <Text style={styles.uploadText}>File</Text>
+        </TouchableOpacity>
+      </View>
 
       <FlatList
         scrollEnabled={false}
@@ -679,6 +704,28 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
+  // Upload buttons bar
+  uploadBar: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+    marginTop: -spacing.sm,
+  },
+  uploadBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  uploadIcon: { fontSize: 14 },
+  uploadText: { color: colors.textSec, fontSize: 11, fontWeight: '500' },
+
   postCard: {
     backgroundColor: colors.panel,
     borderColor: colors.border,
@@ -780,33 +827,33 @@ const styles = StyleSheet.create({
 
   inboxTabBar: {
     flexDirection: 'row',
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
+    gap: spacing.sm,
     marginHorizontal: -spacing.lg,
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.md,
   },
   inboxTab: {
-    paddingVertical: 9,
-    paddingHorizontal: spacing.sm,
-    marginRight: 4,
-    position: 'relative',
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
   },
-  inboxTabActive: {},
+  inboxTabActive: {
+    borderColor: colors.blue,
+    backgroundColor: 'rgba(74,144,255,0.08)',
+  },
   inboxTabText: {
     color: colors.textSec,
-    fontSize: 10,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
     letterSpacing: 0.5,
   },
   inboxTabTextActive: { color: colors.blue },
   inboxTabLine: {
-    position: 'absolute',
-    bottom: -1,
-    left: 0,
-    right: 0,
-    height: 2,
-    backgroundColor: colors.blue,
+    // No longer needed with pill style, but keep to avoid crash
+    height: 0,
   },
 
   sectionLabel: {

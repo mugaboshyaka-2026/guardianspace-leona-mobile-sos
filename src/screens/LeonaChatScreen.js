@@ -32,6 +32,16 @@ const LeonaChatScreen = ({ navigation }) => {
   const [isVideoCall, setIsVideoCall] = useState(false);
   const [inputText, setInputText] = useState('');
   const flatListRef = useRef(null);
+  const [pinnedEventIds, setPinnedEventIds] = useState(new Set());
+
+  const togglePin = (eventId) => {
+    setPinnedEventIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(eventId)) next.delete(eventId);
+      else next.add(eventId);
+      return next;
+    });
+  };
 
   // ── Live API data ──
   const { messages, sending, send: sendChat } = useLeonaChat();
@@ -253,10 +263,42 @@ const LeonaChatScreen = ({ navigation }) => {
         </Text>
       </View>
 
-      {/* AOI Events */}
+      {/* Pinned Events */}
+      {myEvents.filter(e => pinnedEventIds.has(e.id)).length > 0 && (
+        <View style={styles.briefSection}>
+          <View style={styles.pinnedHeader}>
+            <Text style={styles.pinnedIcon}>📌</Text>
+            <Text style={styles.pinnedTitle}>PINNED</Text>
+            <View style={styles.pinnedCountBadge}>
+              <Text style={styles.pinnedCountText}>{myEvents.filter(e => pinnedEventIds.has(e.id)).length}</Text>
+            </View>
+          </View>
+          {myEvents.filter(e => pinnedEventIds.has(e.id)).map((event) => (
+            <TouchableOpacity
+              key={event.id}
+              style={styles.briefEventRow}
+              onPress={() => navigation?.navigate?.('EventDetail', { event })}
+            >
+              <View style={[styles.briefEventIcon, { borderColor: sevColors[event.severity] }]}>
+                <Text style={{ fontSize: 16 }}>{typeIcons[event.type] || '📍'}</Text>
+              </View>
+              <View style={styles.briefEventInfo}>
+                <Text style={styles.briefEventTitle} numberOfLines={1}>{event.title}</Text>
+                <Text style={styles.briefEventLocation}>{event.location}</Text>
+              </View>
+              <View style={[styles.briefSevDot, { backgroundColor: sevColors[event.severity] }]} />
+              <TouchableOpacity onPress={() => togglePin(event.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={styles.pinIconActive}>📌</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {/* Your Events */}
       <View style={styles.briefSection}>
         <Text style={styles.briefSectionTitle}>YOUR EVENTS</Text>
-        {myTopEvents.map((event) => (
+        {myTopEvents.filter((event) => !pinnedEventIds.has(event.id)).map((event) => (
           <TouchableOpacity
             key={event.id}
             style={styles.briefEventRow}
@@ -270,6 +312,9 @@ const LeonaChatScreen = ({ navigation }) => {
               <Text style={styles.briefEventLocation}>{event.location}</Text>
             </View>
             <View style={[styles.briefSevDot, { backgroundColor: sevColors[event.severity] }]} />
+            <TouchableOpacity onPress={() => togglePin(event.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={styles.pinIconDim}>📌</Text>
+            </TouchableOpacity>
           </TouchableOpacity>
         ))}
       </View>
@@ -628,6 +673,15 @@ const styles = StyleSheet.create({
   },
   severityCount: { fontSize: 14, fontWeight: '700', marginBottom: 1 },
   severityLabel: { fontSize: 7, fontWeight: '700', letterSpacing: 0.4 },
+
+  // Pinned section
+  pinnedHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.md },
+  pinnedIcon: { fontSize: 14 },
+  pinnedTitle: { color: '#FFD700', fontSize: 10, fontWeight: '700', letterSpacing: 1 },
+  pinnedCountBadge: { backgroundColor: 'rgba(255,215,0,0.12)', paddingHorizontal: 8, paddingVertical: 1, borderRadius: 10 },
+  pinnedCountText: { color: '#FFD700', fontSize: 10, fontWeight: '700' },
+  pinIconActive: { fontSize: 16, opacity: 0.9 },
+  pinIconDim: { fontSize: 16, opacity: 0.25 },
 
   // GTI Card
   gtiCard: {
