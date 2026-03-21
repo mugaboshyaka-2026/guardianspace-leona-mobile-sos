@@ -13,7 +13,7 @@ import BottomSheet from '@gorhom/bottom-sheet';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
-import { deriveLocalEvents, deriveLocalRegion } from '../lib/locality';
+import { deriveLocalRegion, filterEventsForConfig } from '../lib/locality';
 
 const mapsModule = Platform.OS === 'web'
   ? {
@@ -63,9 +63,17 @@ const MapHomeScreen = ({ navigation }) => {
 
   const { events: myEvents } = useMyEvents();
   const { events: worldEvents } = useWorldEvents();
+  const localSourceEvents = useMemo(
+    () => (myEvents.length > 0 ? myEvents : worldEvents),
+    [myEvents, worldEvents]
+  );
   const localEvents = useMemo(
-    () => deriveLocalEvents(myEvents, worldEvents, userConfig?.location),
-    [myEvents, userConfig?.location, worldEvents]
+    () => filterEventsForConfig(localSourceEvents, userConfig, 'local'),
+    [localSourceEvents, userConfig]
+  );
+  const globalEvents = useMemo(
+    () => filterEventsForConfig(worldEvents, userConfig, 'global'),
+    [userConfig, worldEvents]
   );
   const localRegion = useMemo(
     () => deriveLocalRegion(userConfig?.location, localEvents) || LOCAL_REGION,
@@ -74,21 +82,21 @@ const MapHomeScreen = ({ navigation }) => {
 
   const allEvents = useMemo(() => {
     const deduped = new Map();
-    [...localEvents, ...worldEvents].forEach((event) => deduped.set(event.id, event));
+    [...localEvents, ...globalEvents].forEach((event) => deduped.set(event.id, event));
     return Array.from(deduped.values());
-  }, [localEvents, worldEvents]);
+  }, [globalEvents, localEvents]);
 
   const filteredEvents = useMemo(() => {
     if (activeTab === 'MY_ALERTS') return localEvents;
-    if (activeTab === 'EVENTS') return worldEvents;
+    if (activeTab === 'EVENTS') return globalEvents;
     if (activeTab === 'NEWS') return allEvents.slice(0, 5);
     if (activeTab === 'COMMUNITY') return allEvents.slice(0, 3);
     return allEvents;
-  }, [activeTab, localEvents, worldEvents, allEvents]);
+  }, [activeTab, allEvents, globalEvents, localEvents]);
 
   const scopedEvents = useMemo(
-    () => (mapScope === 'LOCAL' ? localEvents : allEvents),
-    [allEvents, localEvents, mapScope]
+    () => (mapScope === 'LOCAL' ? localEvents : globalEvents),
+    [globalEvents, localEvents, mapScope]
   );
 
   const visibleEvents = useMemo(

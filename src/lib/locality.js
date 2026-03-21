@@ -22,6 +22,24 @@ function normalizeToken(token) {
   return token.trim().toLowerCase();
 }
 
+function toRadians(value) {
+  return (value * Math.PI) / 180;
+}
+
+function distanceKm(aLat, aLng, bLat, bLng) {
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(bLat - aLat);
+  const dLng = toRadians(bLng - aLng);
+  const lat1 = toRadians(aLat);
+  const lat2 = toRadians(bLat);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(lat1) * Math.cos(lat2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
 export function getLocationTerms(location) {
   if (!location) return [];
 
@@ -46,6 +64,55 @@ export function deriveLocalEvents(myEvents = [], worldEvents = [], location = ''
   return worldEvents.filter((event) => {
     const haystack = `${event.location || ''} ${event.title || ''}`.toLowerCase();
     return terms.some((term) => haystack.includes(term));
+  });
+}
+
+function getConfiguredCenters(userConfig = {}) {
+  const configuredAois = Array.isArray(userConfig?.aois) ? userConfig.aois : [];
+  const locationCandidates = Array.from(new Set([
+    ...configuredAois,
+    userConfig?.location,
+  ].filter(Boolean)));
+
+  return locationCandidates
+    .map((value) => {
+      const coords = getLocationCoordinates(value);
+      return coords ? { ...coords, label: value } : null;
+    })
+    .filter(Boolean);
+}
+
+function getSelectedTypes(userConfig = {}) {
+  const types = Array.isArray(userConfig?.eventTypes) ? userConfig.eventTypes : [];
+  return new Set(types.map((value) => String(value).trim().toLowerCase()).filter(Boolean));
+}
+
+export function filterEventsForConfig(events = [], userConfig = {}, scope = 'local') {
+  const selectedTypes = getSelectedTypes(userConfig);
+  const radiusKm = Number(userConfig?.radius) || 0;
+  const centers = getConfiguredCenters(userConfig);
+
+  return events.filter((event) => {
+    if (selectedTypes.size > 0) {
+      const type = String(event?.type || event?.category || '').toLowerCase();
+      if (!selectedTypes.has(type)) {
+        return false;
+      }
+    }
+
+    if (scope !== 'local') {
+      return true;
+    }
+
+    if (!centers.length || !radiusKm) {
+      return true;
+    }
+
+    if (!Number.isFinite(event?.lat) || !Number.isFinite(event?.lng) || event.lat === 0 || event.lng === 0) {
+      return false;
+    }
+
+    return centers.some((center) => distanceKm(center.lat, center.lng, event.lat, event.lng) <= radiusKm);
   });
 }
 

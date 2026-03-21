@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useContext } from 'react';
 import {
   View,
   StyleSheet,
@@ -12,6 +12,8 @@ import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { fetchMyFavorites } from '../lib/api';
 import LeonaHeader from '../components/LeonaHeader';
+import { AppContext } from '../../App';
+import { filterEventsForConfig } from '../lib/locality';
 
 // Helper: "2d ago", "1w ago", etc.
 function getTimeSince(dateStr) {
@@ -39,15 +41,20 @@ function sortEventsNewestFirst(events = []) {
 }
 
 const AlertsScreen = ({ navigation }) => {
+  const { userConfig } = useContext(AppContext);
   const [activeTab, setActiveTab] = useState('MY');
 
   // ── Live API data ──
   const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents();
   const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents();
+  const filteredMyAlerts = useMemo(
+    () => filterEventsForConfig(myAlerts.length > 0 ? myAlerts : worldEvents, userConfig, 'local'),
+    [myAlerts, userConfig, worldEvents]
+  );
   const globalEvents = useMemo(() => {
-    const myIds = new Set(myAlerts.map((e) => e.id));
-    return worldEvents.filter((e) => !myIds.has(e.id));
-  }, [myAlerts, worldEvents]);
+    const myIds = new Set(filteredMyAlerts.map((e) => e.id));
+    return filterEventsForConfig(worldEvents, userConfig, 'global').filter((e) => !myIds.has(e.id));
+  }, [filteredMyAlerts, userConfig, worldEvents]);
 
   // ── Favorites ──
   const [favorites, setFavorites] = useState([]);
@@ -82,7 +89,7 @@ const AlertsScreen = ({ navigation }) => {
       ? worldError
       : null;
 
-  const currentEvents = activeTab === 'MY' ? myAlerts
+  const currentEvents = activeTab === 'MY' ? filteredMyAlerts
     : activeTab === 'GLOBAL' ? globalEvents
     : []; // FAVORITES uses its own list
   const orderedEvents = useMemo(() => sortEventsNewestFirst(currentEvents), [currentEvents]);

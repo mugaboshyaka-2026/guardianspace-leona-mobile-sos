@@ -60,6 +60,17 @@ const DEFAULT_AOI_SUGGESTIONS = [
   'Sydney, Australia',
 ];
 
+const EVENT_TYPE_OPTIONS = [
+  { key: 'wildfire', label: 'Wildfires' },
+  { key: 'flood', label: 'Floods' },
+  { key: 'earthquake', label: 'Earthquakes' },
+  { key: 'hurricane', label: 'Storms & Cyclones' },
+  { key: 'conflict', label: 'Conflict' },
+  { key: 'drought', label: 'Drought & Heat' },
+  { key: 'volcano', label: 'Volcanoes' },
+  { key: 'health', label: 'Health' },
+];
+
 export default function OnboardingScreen() {
   const { handleOnboardingComplete } = useContext(AppContext);
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
@@ -83,6 +94,7 @@ export default function OnboardingScreen() {
   const [existingAois, setExistingAois] = useState([]);
   const [loadingExistingAois, setLoadingExistingAois] = useState(false);
   const [selectedRadius, setSelectedRadius] = useState(50);
+  const [selectedEventTypes, setSelectedEventTypes] = useState(['flood', 'wildfire', 'earthquake']);
   const [pulseAnim] = useState(new Animated.Value(1));
   const [submittingSetup, setSubmittingSetup] = useState(false);
 
@@ -472,6 +484,14 @@ export default function OnboardingScreen() {
     ));
   };
 
+  const toggleEventType = (value) => {
+    setSelectedEventTypes((prev) => (
+      prev.includes(value)
+        ? prev.filter((item) => item !== value)
+        : [...prev, value]
+    ));
+  };
+
   const createAoiWithFallback = async (aoiName) => {
     const coordinates = getLocationCoordinates(aoiName);
     if (!coordinates) {
@@ -507,6 +527,11 @@ export default function OnboardingScreen() {
 
     if ((normalizedLocation ? [...selectedAois, normalizedLocation] : selectedAois).length === 0) {
       Alert.alert('AOI required', 'Select at least one area of interest before continuing.');
+      return;
+    }
+
+    if (selectedEventTypes.length === 0) {
+      Alert.alert('Event types required', 'Select at least one event type before continuing.');
       return;
     }
 
@@ -563,6 +588,7 @@ export default function OnboardingScreen() {
       location: normalizedAois[0] || location,
       aois: normalizedAois,
       radius: selectedRadius,
+      eventTypes: selectedEventTypes,
     });
   };
 
@@ -626,6 +652,8 @@ export default function OnboardingScreen() {
           existingAois={existingAois}
           selectedRadius={selectedRadius}
           setSelectedRadius={setSelectedRadius}
+          selectedEventTypes={selectedEventTypes}
+          toggleEventType={toggleEventType}
           onNext={handleLocationNext}
           loadingExistingAois={loadingExistingAois}
         />
@@ -653,6 +681,7 @@ export default function OnboardingScreen() {
           location={location}
           radius={selectedRadius}
           aois={selectedAois}
+          eventTypes={selectedEventTypes}
           product={selectedProduct}
           productLabel={productLabel}
           onComplete={handleComplete}
@@ -934,6 +963,8 @@ const StepAoiSetup = ({
   existingAois,
   selectedRadius,
   setSelectedRadius,
+  selectedEventTypes,
+  toggleEventType,
   onNext,
   loadingExistingAois,
 }) => (
@@ -1000,13 +1031,33 @@ const StepAoiSetup = ({
       ))}
     </View>
 
+    <Text style={styles.radiusLabel}>Event types</Text>
+    <View style={styles.locationSuggestions}>
+      {EVENT_TYPE_OPTIONS.map((eventType) => (
+        <TouchableOpacity
+          key={eventType.key}
+          style={[styles.locationChip, selectedEventTypes.includes(eventType.key) && styles.locationChipSelected]}
+          onPress={() => toggleEventType(eventType.key)}
+        >
+          <Text
+            style={[
+              styles.locationChipText,
+              selectedEventTypes.includes(eventType.key) && styles.locationChipTextSelected,
+            ]}
+          >
+            {eventType.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+
     <TouchableOpacity style={styles.buttonPrimary} onPress={onNext}>
       <Text style={styles.buttonTextPrimary}>NEXT -></Text>
     </TouchableOpacity>
   </ScrollView>
 );
 
-const StepReady = ({ location, radius, aois, product, productLabel, onComplete, pulseAnim, submitting }) => {
+const StepReady = ({ location, radius, aois, eventTypes, product, productLabel, onComplete, pulseAnim, submitting }) => {
   const productData = PRODUCTS.find((p) => p.id === product);
 
   return (
@@ -1019,7 +1070,7 @@ const StepReady = ({ location, radius, aois, product, productLabel, onComplete, 
 
       <Text style={styles.stepTitle}>LEONA is configured.</Text>
       <Text style={styles.stepSubtitle}>
-        I am now monitoring {(aois && aois[0]) || location || 'your area'} across all active event categories in real time.
+        I am now monitoring {(aois && aois[0]) || location || 'your area'} for {eventTypes?.length || 0} selected event categories in real time.
       </Text>
 
       <View style={styles.summaryCard}>
@@ -1031,7 +1082,7 @@ const StepReady = ({ location, radius, aois, product, productLabel, onComplete, 
         <View style={styles.summaryDivider} />
         <SummaryRow label="Radius" value={`${radius}km`} />
         <View style={styles.summaryDivider} />
-        <SummaryRow label="Monitoring" value="Live intelligence" />
+        <SummaryRow label="Event Types" value={`${eventTypes?.length || 0}`} />
       </View>
 
       <TouchableOpacity style={styles.buttonPrimary} onPress={onComplete} disabled={submitting}>
