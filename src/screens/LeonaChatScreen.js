@@ -13,6 +13,7 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents, useAOIs, useLeonaChat, useLeonaBrief } from '../hooks/useEvents';
@@ -123,6 +124,10 @@ const LeonaChatScreen = ({ navigation }) => {
   }), [USER_AOIS, myEvents.length, mySeverityCounts, myTopEvents]);
   const { brief: worldBrief } = useLeonaBrief(worldBriefContext);
   const { brief: myBrief } = useLeonaBrief(myBriefContext);
+  const worldNarrative = extractBriefText(worldBrief)
+    || `${EVENTS.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`;
+  const myNarrative = extractBriefText(myBrief)
+    || `Active monitoring across ${USER_AOIS.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`;
 
   const quickChips = [
     'Critical events',
@@ -173,14 +178,14 @@ const LeonaChatScreen = ({ navigation }) => {
           </View>
         </View>
         <View style={styles.gtiRow}>
-          <Text style={styles.gtiScore}>72</Text>
+          <Text style={styles.gtiScore}>{worldThreatScore}</Text>
           <Text style={styles.gtiMax}>/100</Text>
           <View style={styles.gtiTrend}>
-            <Text style={styles.gtiTrendText}>↑ +3</Text>
+            <Text style={styles.gtiTrendText}>{severityCounts.critical} critical</Text>
           </View>
         </View>
         <View style={styles.gtiBar}>
-          <View style={[styles.gtiBarFill, { width: '72%' }]} />
+          <View style={[styles.gtiBarFill, { width: `${worldThreatScore}%` }]} />
         </View>
       </View>
 
@@ -208,7 +213,7 @@ const LeonaChatScreen = ({ navigation }) => {
       {/* Narrative */}
       <View style={styles.narrativeCard}>
         <Text style={styles.narrativeText}>
-          {EVENTS.length} active events globally. {severityCounts.critical} critical situations requiring immediate attention. Threat level elevated across 3 continental regions.
+          {worldNarrative}
         </Text>
       </View>
 
@@ -236,17 +241,17 @@ const LeonaChatScreen = ({ navigation }) => {
       {/* Quick Stats */}
       <View style={styles.myBriefStats}>
         <View style={styles.myBriefStat}>
-          <Text style={[styles.myBriefStatNum, { color: colors.critical }]}>2</Text>
+          <Text style={[styles.myBriefStatNum, { color: colors.critical }]}>{mySeverityCounts.critical}</Text>
           <Text style={styles.myBriefStatLabel}>Critical</Text>
         </View>
         <View style={styles.myBriefStatDivider} />
         <View style={styles.myBriefStat}>
-          <Text style={[styles.myBriefStatNum, { color: colors.high }]}>2</Text>
+          <Text style={[styles.myBriefStatNum, { color: colors.high }]}>{mySeverityCounts.high}</Text>
           <Text style={styles.myBriefStatLabel}>High</Text>
         </View>
         <View style={styles.myBriefStatDivider} />
         <View style={styles.myBriefStat}>
-          <Text style={[styles.myBriefStatNum, { color: colors.blue }]}>4</Text>
+          <Text style={[styles.myBriefStatNum, { color: colors.blue }]}>{USER_AOIS.length}</Text>
           <Text style={styles.myBriefStatLabel}>AOIs</Text>
         </View>
       </View>
@@ -255,7 +260,7 @@ const LeonaChatScreen = ({ navigation }) => {
       <View style={styles.narrativeCard}>
         <Text style={styles.narrativeSectionTitle}>SITUATION SUMMARY</Text>
         <Text style={styles.narrativeText}>
-          Active monitoring across your {USER_AOIS.length} Areas of Interest. Los Angeles Wildfire Complex (CRITICAL) has expanded to 47,200 acres with mandatory evacuations in 7 communities. Ukraine conflict escalation (CRITICAL) showing increased cross-border activity. Horn of Africa drought crisis (HIGH) affecting 22 million people. Bangladesh flooding (HIGH) has displaced 2.1 million with Brahmaputra River at danger crest.
+          {myNarrative}
         </Text>
       </View>
 
@@ -294,7 +299,7 @@ const LeonaChatScreen = ({ navigation }) => {
       {/* Your Events */}
       <View style={styles.briefSection}>
         <Text style={styles.briefSectionTitle}>YOUR EVENTS</Text>
-        {myEvents.filter(e => !pinnedEventIds.has(e.id)).map((event) => (
+        {myTopEvents.filter((event) => !pinnedEventIds.has(event.id)).map((event) => (
           <TouchableOpacity
             key={event.id}
             style={styles.briefEventRow}
@@ -340,6 +345,16 @@ const LeonaChatScreen = ({ navigation }) => {
     );
   };
 
+  const renderTypingIndicator = () => (
+    <View style={[styles.messageBubbleContainer, styles.agentContainer]}>
+      <Image source={leonaAvatar} style={styles.chatAvatarImage} />
+      <View style={[styles.messageBubble, styles.agentBubble, styles.typingBubble]}>
+        <ActivityIndicator size="small" color={colors.blueLight} />
+        <Text style={styles.typingText}>LEONA is responding...</Text>
+      </View>
+    </View>
+  );
+
   const handleAttachPress = () => {
     // TODO: implement file picker (expo-document-picker or expo-image-picker)
     console.log('[LEONA] Attach file pressed');
@@ -366,6 +381,7 @@ const LeonaChatScreen = ({ navigation }) => {
         renderItem={renderMessage}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.messagesList}
+        ListFooterComponent={sending ? renderTypingIndicator : null}
         onContentSizeChange={scrollToBottom}
         keyboardShouldPersistTaps="handled"
       />
@@ -385,11 +401,11 @@ const LeonaChatScreen = ({ navigation }) => {
           maxLength={1000}
         />
         <TouchableOpacity
-          style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+          style={[styles.sendButton, (!inputText.trim() || sending) && styles.sendButtonDisabled]}
           onPress={handleSend}
-          disabled={!inputText.trim()}
+          disabled={!inputText.trim() || sending}
         >
-          <Text style={styles.sendButtonText}>→</Text>
+          {sending ? <ActivityIndicator size="small" color={colors.white} /> : <Text style={styles.sendButtonText}>→</Text>}
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -801,9 +817,11 @@ const styles = StyleSheet.create({
   messageBubble: { maxWidth: width * 0.72, paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderRadius: 12 },
   agentBubble: { backgroundColor: colors.purpleDim, borderLeftColor: colors.purple, borderLeftWidth: 2 },
   userBubble: { backgroundColor: colors.blueDim, borderRightColor: colors.blue, borderRightWidth: 2 },
+  typingBubble: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   messageText: { fontSize: 14, lineHeight: 20 },
   agentText: { color: colors.text },
   userText: { color: colors.blueLight },
+  typingText: { color: colors.textSec, fontSize: 13, fontWeight: '500' },
 
   // Quick chips — compact pills above chat, wrapping to show all 6
   chipsSection: {

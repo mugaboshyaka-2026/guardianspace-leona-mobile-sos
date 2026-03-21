@@ -32,6 +32,14 @@ function getTimeSince(dateStr) {
   }
 }
 
+function sortEventsNewestFirst(events = []) {
+  return [...events].sort((a, b) => {
+    const aTime = new Date(a.created_at || 0).getTime();
+    const bTime = new Date(b.created_at || 0).getTime();
+    return bTime - aTime;
+  });
+}
+
 const AlertsScreen = ({ navigation }) => {
   const { userConfig } = useContext(AppContext);
   const [activeTab, setActiveTab] = useState('MY');
@@ -84,6 +92,7 @@ const AlertsScreen = ({ navigation }) => {
   const currentEvents = activeTab === 'MY' ? localAlerts
     : activeTab === 'GLOBAL' ? globalEvents
     : []; // FAVORITES uses its own list
+  const orderedEvents = useMemo(() => sortEventsNewestFirst(currentEvents), [currentEvents]);
 
   // Group by severity
   const grouped = useMemo(() => {
@@ -93,12 +102,12 @@ const AlertsScreen = ({ navigation }) => {
       { key: 'elevated', title: 'ELEVATED', color: sevColors.elevated, data: [] },
       { key: 'monitoring', title: 'MONITORING', color: sevColors.monitoring, data: [] },
     ];
-    currentEvents.forEach((e) => {
+    orderedEvents.forEach((e) => {
       const g = groups.find((g) => g.key === e.severity);
       if (g) g.data.push(e);
     });
     return groups.filter((g) => g.data.length > 0);
-  }, [currentEvents]);
+  }, [orderedEvents]);
 
   const handleAlertPress = (event) => {
     navigation.navigate('EventDetail', { event });

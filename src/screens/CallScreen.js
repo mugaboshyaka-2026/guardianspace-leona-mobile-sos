@@ -23,8 +23,80 @@ import {
   Dimensions,
 } from 'react-native';
 import { colors, spacing } from '../theme';
+import * as WebBrowser from 'expo-web-browser';
+import {
+  endTavusConversation,
+  getTavusConversation,
+  startTavusConversation,
+} from '../lib/api';
 
 const { width: SCREEN_W } = Dimensions.get('window');
+
+function findConversationUrl(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const directKeys = [
+    'conversation_url',
+    'conversationUrl',
+    'url',
+    'join_url',
+    'joinUrl',
+    'web_url',
+    'webUrl',
+    'iframe_url',
+    'iframeUrl',
+  ];
+
+  for (const key of directKeys) {
+    const value = payload[key];
+    if (typeof value === 'string' && /^https?:\/\//i.test(value)) {
+      return value;
+    }
+  }
+
+  const nestedKeys = ['conversation', 'data', 'session', 'result'];
+  for (const key of nestedKeys) {
+    const nested = payload[key];
+    const nestedUrl = findConversationUrl(nested);
+    if (nestedUrl) return nestedUrl;
+  }
+
+  return null;
+}
+
+function findConversationId(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const directKeys = ['conversation_id', 'conversationId', 'id'];
+  for (const key of directKeys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+
+  const nestedKeys = ['conversation', 'data', 'session', 'result'];
+  for (const key of nestedKeys) {
+    const nested = payload[key];
+    const nestedId = findConversationId(nested);
+    if (nestedId) return nestedId;
+  }
+
+  return null;
+}
+
+function summarizePayload(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+
+  const summary = {};
+  Object.keys(payload).slice(0, 20).forEach((key) => {
+    const value = payload[key];
+    summary[key] = typeof value === 'object' && value !== null
+      ? Array.isArray(value) ? `array(${value.length})` : 'object'
+      : value;
+  });
+  return summary;
+}
 
 const CallScreen = ({ navigation, route }) => {
   const {
@@ -41,22 +113,15 @@ const CallScreen = ({ navigation, route }) => {
   const [camOff,    setCamOff]    = useState(!isVideo);
   const [speakerOn, setSpeakerOn] = useState(true);
   const [connected, setConnected] = useState(false);
+  const [isStarting, setIsStarting] = useState(isVideo);
+  const [sessionError, setSessionError] = useState('');
+  const [conversationUrl, setConversationUrl] = useState('');
+  const [conversationId, setConversationId] = useState('');
 
   // ── Timer ───────────────────────────────────────────────────────────────────
   const [duration, setDuration] = useState(0);
   const timerRef = useRef(null);
-
-  // Simulate connecting after 1.8 s
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setConnected(true);
-      timerRef.current = setInterval(() => setDuration((d) => d + 1), 1000);
-    }, 1800);
-    return () => {
-      clearTimeout(t);
-      clearInterval(timerRef.current);
-    };
-  }, []);
+  const hasStartedRef = useRef(false);
 
   const formatDuration = (s) =>
     `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
@@ -70,10 +135,120 @@ const CallScreen = ({ navigation, route }) => {
   const toggleCamera  = useCallback(() => setCamOff((v) => !v),    []);
   const toggleSpeaker = useCallback(() => setSpeakerOn((v) => !v), []);
 
+  const markConnected = useCallback(() => {
+    setConnected(true);
+    clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => setDuration((d) => d + 1), 1000);
+  }, []);
+
+  const openConversation = useCallback(async (url) => {
+    if (!url) return;
+    try {
+      console.log('[Tavus] Opening browser session', { url });
+      await WebBrowser.openBrowserAsync(url, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+      });
+      console.log('[Tavus] Browser session closed by user/app');
+    } catch (err) {
+      console.warn('[Tavus] Browser open failed:', err.message);
+    }
+  }, []);
+
+  const hydrateConversation = useCallback(async (payload, { autoOpen = false } = {}) => {
+    console.log('[Tavus] Hydrating conversation payload', summarizePayload(payload));
+    const nextUrl = findConversationUrl(payload);
+    const nextId = findConversationId(payload);
+    console.log('[Tavus] Extracted session details', {
+      conversationUrl: nextUrl || null,
+      conversationId: nextId || null,
+      autoOpen,
+    });
+
+    if (nextUrl) setConversationUrl(nextUrl);
+    if (nextId) setConversationId(nextId);
+
+    if (nextUrl || nextId) {
+      markConnected();
+      if (nextUrl && autoOpen) {
+        await openConversation(nextUrl);
+      }
+      return true;
+    }
+
+    return false;
+  }, [markConnected, openConversation]);
+
+  const bootstrapConversation = useCallback(async () => {
+    if (!isVideo || hasStartedRef.current) return;
+
+    hasStartedRef.current = true;
+    setIsStarting(true);
+    setSessionError('');
+    console.log('[Tavus] Bootstrapping conversation', {
+      channelName,
+      threadName,
+      callType,
+      participantsCount: participants.length,
+    });
+
+    try {
+      const active = await getTavusConversation().catch((err) => {
+        console.warn('[Tavus] Get active conversation failed:', err.message);
+        return null;
+      });
+      const resumed = await hydrateConversation(active, { autoOpen: false });
+      console.log('[Tavus] Existing conversation resume result', { resumed });
+
+      if (!resumed) {
+        console.log('[Tavus] Starting new conversation request');
+        const created = await startTavusConversation({
+          channel_name: channelName,
+          thread_name: threadName,
+          participants,
+          call_type: callType,
+        });
+        console.log('[Tavus] Start conversation response', summarizePayload(created));
+        const started = await hydrateConversation(created, { autoOpen: true });
+        console.log('[Tavus] New conversation start result', { started });
+        if (!started) {
+          throw new Error('Conversation started but no usable session details were returned.');
+        }
+      }
+    } catch (err) {
+      console.warn('[Tavus] Bootstrap failed:', err.message);
+      setSessionError(err.message || 'Unable to start Tavus conversation.');
+    } finally {
+      console.log('[Tavus] Bootstrap finished');
+      setIsStarting(false);
+    }
+  }, [callType, channelName, hydrateConversation, isVideo, participants, threadName]);
+
+  useEffect(() => {
+    if (isVideo) {
+      bootstrapConversation();
+    } else {
+      markConnected();
+    }
+
+    return () => {
+      clearInterval(timerRef.current);
+    };
+  }, [bootstrapConversation, isVideo, markConnected]);
+
   const endCall = useCallback(() => {
     clearInterval(timerRef.current);
+    console.log('[Tavus] Ending call screen', {
+      isVideo,
+      conversationId: conversationId || null,
+      conversationUrl: conversationUrl || null,
+    });
+    if (isVideo) {
+      endTavusConversation().catch((err) => {
+        console.warn('[Tavus] End conversation failed:', err.message);
+      });
+    }
     navigation.goBack();
-  }, [navigation]);
+  }, [conversationId, conversationUrl, isVideo, navigation]);
 
   const participantLabel =
     participants.length > 0 ? participants.join(', ') : threadName;
@@ -147,7 +322,31 @@ const CallScreen = ({ navigation, route }) => {
         {/* Centre info */}
         <View style={styles.callInfo}>
           <Text style={styles.callTitle}>{threadName}</Text>
-          <Text style={styles.callStatus}>{statusText}</Text>
+          <Text style={styles.callStatus}>
+            {sessionError ? 'Session error' : isStarting ? 'Starting Tavus session...' : statusText}
+          </Text>
+          {!!conversationId && (
+            <Text style={styles.sessionMeta}>Session {conversationId}</Text>
+          )}
+          {!!sessionError && (
+            <Text style={styles.sessionErrorText}>{sessionError}</Text>
+          )}
+          {isVideo && !!conversationUrl && (
+            <TouchableOpacity style={styles.sessionActionBtn} onPress={() => openConversation(conversationUrl)}>
+              <Text style={styles.sessionActionText}>Open Tavus Video</Text>
+            </TouchableOpacity>
+          )}
+          {isVideo && !conversationUrl && !!sessionError && (
+            <TouchableOpacity
+              style={styles.sessionActionBtn}
+              onPress={() => {
+                hasStartedRef.current = false;
+                bootstrapConversation();
+              }}
+            >
+              <Text style={styles.sessionActionText}>Retry Session</Text>
+            </TouchableOpacity>
+          )}
           {connected && (
             <View style={styles.connectedBadge}>
               <View style={styles.connectedDot} />
@@ -395,6 +594,33 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '500',
     marginBottom: 8,
+  },
+  sessionMeta: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 11,
+    marginBottom: 6,
+  },
+  sessionErrorText: {
+    color: '#FFB3AE',
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  sessionActionBtn: {
+    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(0,168,255,0.35)',
+    backgroundColor: 'rgba(0,168,255,0.14)',
+  },
+  sessionActionText: {
+    color: colors.blueLight,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   connectedBadge: {
     flexDirection: 'row',

@@ -9,7 +9,6 @@ import {
   FlatList,
 } from 'react-native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
-import { GRI_COUNTRIES } from '../data/events';
 import { useMyEvents, useWorldEvents, useAOIs, useLeonaBrief } from '../hooks/useEvents';
 import LeonaHeader from '../components/LeonaHeader';
 
@@ -88,7 +87,6 @@ const BriefsScreen = ({ navigation }) => {
   const tabs = [
     { label: 'WORLD BRIEF', value: 'WORLD' },
     { label: 'MY BRIEF', value: 'MY' },
-    { label: 'COUNTRY RISK', value: 'COUNTRY' },
     { label: 'CHAT', value: 'CHAT' },
   ];
 
@@ -121,13 +119,6 @@ const BriefsScreen = ({ navigation }) => {
       <View style={[styles.severityDot, { backgroundColor: sevColors[item.severity] }]} />
     </TouchableOpacity>
   );
-
-  const getGriColor = (gri) => {
-    if (gri >= 85) return sevColors.critical;
-    if (gri >= 75) return sevColors.high;
-    if (gri >= 60) return sevColors.elevated;
-    return sevColors.monitoring;
-  };
 
   const renderWorldBrief = () => (
     <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
@@ -223,44 +214,6 @@ const BriefsScreen = ({ navigation }) => {
     </ScrollView>
   );
 
-  const renderCountryRisk = () => (
-    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>GLOBAL RISK INDEX - TOP 10</Text>
-        <Text style={styles.sectionSubtitle}>Countries ranked by composite threat score</Text>
-      </View>
-
-      {GRI_COUNTRIES.map((country, idx) => {
-        const griColor = getGriColor(country.gri);
-        return (
-          <View key={country.code} style={styles.countryRow}>
-            <Text style={styles.countryRank}>{idx + 1}</Text>
-            <Text style={styles.countryFlag}>{country.flag}</Text>
-            <View style={styles.countryInfo}>
-              <Text style={styles.countryName}>{country.name}</Text>
-              <View style={styles.griBarBg}>
-                <View style={[styles.griBarFill, { width: `${country.gri}%`, backgroundColor: griColor }]} />
-              </View>
-            </View>
-            <View style={styles.countryRight}>
-              <Text style={[styles.griScore, { color: griColor }]}>{country.gri}</Text>
-              <Text
-                style={[
-                  styles.countryTrend,
-                  { color: country.trend === '↑' ? colors.critical : country.trend === '↓' ? colors.safe : colors.textSec },
-                ]}
-              >
-                {country.trend}
-              </Text>
-            </View>
-          </View>
-        );
-      })}
-
-      <View style={{ height: 40 }} />
-    </ScrollView>
-  );
-
   return (
     <SafeAreaView style={styles.container}>
       <LeonaHeader
@@ -299,7 +252,6 @@ const BriefsScreen = ({ navigation }) => {
 
       {activeTab === 'WORLD' && renderWorldBrief()}
       {activeTab === 'MY' && renderMyBrief()}
-      {activeTab === 'COUNTRY' && renderCountryRisk()}
     </SafeAreaView>
   );
 };
@@ -574,55 +526,6 @@ const styles = StyleSheet.create({
     color: colors.textDim,
     fontSize: 12,
     paddingVertical: spacing.md,
-  },
-  countryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-    gap: spacing.md,
-  },
-  countryRank: {
-    color: colors.textDim,
-    fontSize: 12,
-    fontWeight: '700',
-    width: 20,
-    textAlign: 'center',
-  },
-  countryFlag: {
-    fontSize: 22,
-  },
-  countryInfo: {
-    flex: 1,
-  },
-  countryName: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: spacing.xs,
-  },
-  griBarBg: {
-    height: 4,
-    backgroundColor: colors.panel,
-    borderRadius: 2,
-  },
-  griBarFill: {
-    height: 4,
-    borderRadius: 2,
-  },
-  countryRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  griScore: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  countryTrend: {
-    fontSize: 16,
-    fontWeight: '600',
   },
 });
 

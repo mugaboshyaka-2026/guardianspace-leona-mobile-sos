@@ -13,6 +13,7 @@ try {
 
 const deliveredKeys = new Set();
 let initialized = false;
+let responseSubscription = null;
 
 if (Notifications?.setNotificationHandler) {
   Notifications.setNotificationHandler({
@@ -31,12 +32,18 @@ function getProjectId() {
 
 export async function initNotifications() {
   if (!Notifications || initialized) {
+    console.log('[LEONA Notifications] Init skipped', {
+      hasNotifications: !!Notifications,
+      initialized,
+    });
     return;
   }
 
   initialized = true;
+  console.log('[LEONA Notifications] Initializing');
 
   if (Platform.OS === 'android') {
+    console.log('[LEONA Notifications] Configuring Android channel');
     await Notifications.setNotificationChannelAsync('alerts', {
       name: 'Alerts',
       importance: Notifications.AndroidImportance.HIGH,
@@ -48,10 +55,12 @@ export async function initNotifications() {
 
   const currentPermissions = await Notifications.getPermissionsAsync();
   let finalStatus = currentPermissions.status;
+  console.log('[LEONA Notifications] Current permission status', finalStatus);
 
   if (finalStatus !== 'granted') {
     const requested = await Notifications.requestPermissionsAsync();
     finalStatus = requested.status;
+    console.log('[LEONA Notifications] Requested permission status', finalStatus);
   }
 
   if (finalStatus !== 'granted') {
@@ -64,10 +73,13 @@ export async function initNotifications() {
     if (projectId) {
       const token = await Notifications.getExpoPushTokenAsync({ projectId });
       console.log('[LEONA Notifications] Expo push token', token.data);
+      return token.data;
     }
   } catch (error) {
     console.warn('[LEONA Notifications] Push token fetch failed:', error.message);
   }
+
+  return null;
 }
 
 function buildRealtimeNotification(update) {
@@ -115,15 +127,26 @@ function buildRealtimeNotification(update) {
 
 export async function notifyRealtimeUpdate(update) {
   if (!Notifications) {
+    console.log('[LEONA Notifications] Skipping schedule, notifications unavailable');
     return;
   }
 
   const notification = buildRealtimeNotification(update);
   if (!notification) {
+    console.log('[LEONA Notifications] Update did not qualify for notification', {
+      type: update?.type,
+      eventId: update?.event?.id || update?.event?.event_id || null,
+      severity: update?.event?.severity || null,
+    });
     return;
   }
 
   await initNotifications();
+  console.log('[LEONA Notifications] Scheduling notification', {
+    title: notification.title,
+    body: notification.body,
+    eventId: notification.data?.event?.id || notification.data?.event?.event_id || null,
+  });
 
   await Notifications.scheduleNotificationAsync({
     content: {
@@ -134,4 +157,23 @@ export async function notifyRealtimeUpdate(update) {
     },
     trigger: null,
   });
+}
+
+export function addNotificationResponseListener(listener) {
+  if (!Notifications?.addNotificationResponseReceivedListener) {
+    console.log('[LEONA Notifications] Response listener unavailable');
+    return () => {};
+  }
+
+  if (responseSubscription) {
+    responseSubscription.remove();
+  }
+
+  responseSubscription = Notifications.addNotificationResponseReceivedListener(listener);
+  console.log('[LEONA Notifications] Response listener attached');
+  return () => {
+    responseSubscription?.remove?.();
+    responseSubscription = null;
+    console.log('[LEONA Notifications] Response listener removed');
+  };
 }
