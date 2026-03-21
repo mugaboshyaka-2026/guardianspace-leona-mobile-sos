@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useContext } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -12,8 +12,6 @@ import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { fetchMyFavorites } from '../lib/api';
 import LeonaHeader from '../components/LeonaHeader';
-import { AppContext } from '../../App';
-import { deriveLocalEvents } from '../lib/locality';
 
 // Helper: "2d ago", "1w ago", etc.
 function getTimeSince(dateStr) {
@@ -41,20 +39,15 @@ function sortEventsNewestFirst(events = []) {
 }
 
 const AlertsScreen = ({ navigation }) => {
-  const { userConfig } = useContext(AppContext);
   const [activeTab, setActiveTab] = useState('MY');
 
   // ── Live API data ──
   const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents();
   const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents();
-  const localAlerts = useMemo(
-    () => deriveLocalEvents(myAlerts, worldEvents, userConfig?.location),
-    [myAlerts, userConfig?.location, worldEvents]
-  );
   const globalEvents = useMemo(() => {
-    const myIds = new Set(localAlerts.map((e) => e.id));
+    const myIds = new Set(myAlerts.map((e) => e.id));
     return worldEvents.filter((e) => !myIds.has(e.id));
-  }, [localAlerts, worldEvents]);
+  }, [myAlerts, worldEvents]);
 
   // ── Favorites ──
   const [favorites, setFavorites] = useState([]);
@@ -89,7 +82,7 @@ const AlertsScreen = ({ navigation }) => {
       ? worldError
       : null;
 
-  const currentEvents = activeTab === 'MY' ? localAlerts
+  const currentEvents = activeTab === 'MY' ? myAlerts
     : activeTab === 'GLOBAL' ? globalEvents
     : []; // FAVORITES uses its own list
   const orderedEvents = useMemo(() => sortEventsNewestFirst(currentEvents), [currentEvents]);

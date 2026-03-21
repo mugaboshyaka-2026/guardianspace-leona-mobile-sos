@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useContext } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image, Animated } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -19,9 +19,6 @@ import ProfileScreen from '../screens/ProfileScreen';
 import SubscriptionScreen from '../screens/SubscriptionScreen';
 import CallScreen from '../screens/CallScreen';
 import { useMyEvents } from '../hooks/useEvents';
-import { useWorldEvents } from '../hooks/useEvents';
-import { AppContext } from '../../App';
-import { deriveLocalEvents } from '../lib/locality';
 
 // LEONA avatar image
 const leonaAvatar = require('../assets/leona-avatar.png');
@@ -176,14 +173,8 @@ const LeonaTabButton = ({ onPress, accessibilityState }) => {
 };
 
 export const AppNavigator = () => {
-  const { userConfig } = useContext(AppContext);
   const { events: myEvents } = useMyEvents();
-  const { events: worldEvents } = useWorldEvents();
-  const localEvents = useMemo(
-    () => deriveLocalEvents(myEvents, worldEvents, userConfig?.location),
-    [myEvents, userConfig?.location, worldEvents]
-  );
-  const alertsBadge = localEvents.length > 0 ? localEvents.length : undefined;
+  const alertsBadge = myEvents.length > 0 ? myEvents.length : undefined;
 
   return (
     <Tab.Navigator
