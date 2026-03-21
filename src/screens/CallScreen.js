@@ -11,7 +11,7 @@
  * const AGORA_TOKEN  = null;                   // [AGORA] null = testing mode
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useContext, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -21,6 +21,7 @@ import {
   StatusBar,
   Platform,
   Dimensions,
+  Alert,
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import * as WebBrowser from 'expo-web-browser';
@@ -29,6 +30,9 @@ import {
   getTavusConversation,
   startTavusConversation,
 } from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { AppContext } from '../../App';
+import { getProductConfig } from '../lib/products';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -105,8 +109,34 @@ const CallScreen = ({ navigation, route }) => {
     threadName  = 'Team Call',
     participants = [],
   } = route.params || {};
+  const { user } = useAuth();
+  const { userConfig } = useContext(AppContext);
+  const productConfig = getProductConfig(userConfig?.product);
 
   const isVideo = callType === 'video';
+  const currentUserIdentity = useMemo(() => {
+    const clerkFullName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim();
+    const configFullName = userConfig?.fullName?.trim?.() || '';
+    const email =
+      user?.primaryEmailAddress?.emailAddress
+      || user?.emailAddresses?.[0]?.emailAddress
+      || userConfig?.email
+      || '';
+
+    const displayName =
+      clerkFullName
+      || configFullName
+      || (email ? email.split('@')[0] : '')
+      || 'Guardian Space User';
+
+    return {
+      id: user?.id || userConfig?.userId || '',
+      name: displayName,
+      email,
+      first_name: user?.firstName || displayName.split(' ')[0] || '',
+      last_name: user?.lastName || displayName.split(' ').slice(1).join(' ') || '',
+    };
+  }, [user, userConfig]);
 
   // ── Controls ────────────────────────────────────────────────────────────────
   const [micMuted,  setMicMuted]  = useState(false);
@@ -189,6 +219,7 @@ const CallScreen = ({ navigation, route }) => {
       threadName,
       callType,
       participantsCount: participants.length,
+      currentUserIdentity,
     });
 
     try {
@@ -206,6 +237,14 @@ const CallScreen = ({ navigation, route }) => {
           thread_name: threadName,
           participants,
           call_type: callType,
+          user: currentUserIdentity,
+          participant: currentUserIdentity,
+          viewer: currentUserIdentity,
+          display_name: currentUserIdentity.name,
+          participant_name: currentUserIdentity.name,
+          participant_email: currentUserIdentity.email,
+          user_name: currentUserIdentity.name,
+          user_email: currentUserIdentity.email,
         });
         console.log('[Tavus] Start conversation response', summarizePayload(created));
         const started = await hydrateConversation(created, { autoOpen: true });
@@ -221,9 +260,15 @@ const CallScreen = ({ navigation, route }) => {
       console.log('[Tavus] Bootstrap finished');
       setIsStarting(false);
     }
-  }, [callType, channelName, hydrateConversation, isVideo, participants, threadName]);
+  }, [callType, channelName, currentUserIdentity, hydrateConversation, isVideo, participants, threadName]);
 
   useEffect(() => {
+    if (isVideo && !productConfig.canUseVideoAgent) {
+      Alert.alert('Plan upgrade required', 'Video agent access is not available on your current plan.');
+      navigation.goBack();
+      return undefined;
+    }
+
     if (isVideo) {
       bootstrapConversation();
     } else {
@@ -233,7 +278,7 @@ const CallScreen = ({ navigation, route }) => {
     return () => {
       clearInterval(timerRef.current);
     };
-  }, [bootstrapConversation, isVideo, markConnected]);
+  }, [bootstrapConversation, isVideo, markConnected, navigation, productConfig.canUseVideoAgent]);
 
   const endCall = useCallback(() => {
     clearInterval(timerRef.current);

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useContext } from 'react';
 import {
   View,
   StyleSheet,
@@ -13,6 +13,8 @@ import {
   Platform,
 } from 'react-native';
 import { colors, spacing } from '../theme';
+import { AppContext } from '../../App';
+import { getProductConfig } from '../lib/products';
 
 const { width } = Dimensions.get('window');
 
@@ -95,6 +97,8 @@ const THREAD_MESSAGES = {
 };
 
 const ThreadScreen = ({ route, navigation }) => {
+  const { userConfig } = useContext(AppContext);
+  const productConfig = getProductConfig(userConfig?.product);
   const { thread } = route.params || {};
   const [messages, setMessages] = useState(THREAD_MESSAGES.default);
   const [inputText, setInputText] = useState('');
@@ -219,7 +223,8 @@ const ThreadScreen = ({ route, navigation }) => {
             <Text style={styles.callIconBtnText}>🎙</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.callIconBtn}
+            style={[styles.callIconBtn, !productConfig.canUseVideoAgent && styles.callIconBtnDisabled]}
+            disabled={!productConfig.canUseVideoAgent}
             onPress={() =>
               navigation.navigate('Call', {
                 channelName: (thread?.id || 'leona').replace(/[^a-zA-Z0-9]/g, '-'),
@@ -326,6 +331,9 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  callIconBtnDisabled: {
+    opacity: 0.45,
   },
   callIconBtnText: {
     fontSize: 16,

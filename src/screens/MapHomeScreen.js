@@ -13,7 +13,8 @@ import BottomSheet from '@gorhom/bottom-sheet';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
-import { deriveLocalEvents, deriveLocalRegion } from '../lib/locality';
+import { deriveLocalRegion, filterEventsForConfig } from '../lib/locality';
+import { getProductConfig, limitEventsForProduct } from '../lib/products';
 
 const mapsModule = Platform.OS === 'web'
   ? {
@@ -41,6 +42,7 @@ const layers = [
 
 const MapHomeScreen = ({ navigation }) => {
   const { userConfig } = useContext(AppContext);
+  const productConfig = getProductConfig(userConfig?.product);
   const mapRef = useRef(null);
   const bottomSheetRef = useRef(null);
   const [is3D, setIs3D] = useState(false);
@@ -63,9 +65,25 @@ const MapHomeScreen = ({ navigation }) => {
 
   const { events: myEvents } = useMyEvents();
   const { events: worldEvents } = useWorldEvents();
+  const availableLayers = useMemo(
+    () => layers.filter((layer) => productConfig.enabledMapLayers.includes(layer.key)),
+    [productConfig.enabledMapLayers]
+  );
+  const bottomSheetTabs = useMemo(
+    () => (productConfig.canUseCommunity ? ['MY_ALERTS', 'EVENTS', 'NEWS', 'COMMUNITY'] : ['MY_ALERTS', 'EVENTS', 'NEWS']),
+    [productConfig.canUseCommunity]
+  );
+  const localSourceEvents = useMemo(
+    () => (myEvents.length > 0 ? myEvents : worldEvents),
+    [myEvents, worldEvents]
+  );
   const localEvents = useMemo(
-    () => deriveLocalEvents(myEvents, worldEvents, userConfig?.location),
-    [myEvents, userConfig?.location, worldEvents]
+    () => limitEventsForProduct(filterEventsForConfig(localSourceEvents, userConfig, 'local'), userConfig?.product),
+    [localSourceEvents, userConfig]
+  );
+  const globalEvents = useMemo(
+    () => limitEventsForProduct(filterEventsForConfig(worldEvents, userConfig, 'global'), userConfig?.product),
+    [userConfig, worldEvents]
   );
   const localRegion = useMemo(
     () => deriveLocalRegion(userConfig?.location, localEvents) || LOCAL_REGION,
@@ -74,27 +92,44 @@ const MapHomeScreen = ({ navigation }) => {
 
   const allEvents = useMemo(() => {
     const deduped = new Map();
-    [...localEvents, ...worldEvents].forEach((event) => deduped.set(event.id, event));
+    [...localEvents, ...globalEvents].forEach((event) => deduped.set(event.id, event));
     return Array.from(deduped.values());
-  }, [localEvents, worldEvents]);
+  }, [globalEvents, localEvents]);
 
   const filteredEvents = useMemo(() => {
     if (activeTab === 'MY_ALERTS') return localEvents;
-    if (activeTab === 'EVENTS') return worldEvents;
+    if (activeTab === 'EVENTS') return globalEvents;
     if (activeTab === 'NEWS') return allEvents.slice(0, 5);
+    if (activeTab === 'COMMUNITY' && !productConfig.canUseCommunity) return [];
     if (activeTab === 'COMMUNITY') return allEvents.slice(0, 3);
     return allEvents;
-  }, [activeTab, localEvents, worldEvents, allEvents]);
+  }, [activeTab, allEvents, globalEvents, localEvents, productConfig.canUseCommunity]);
 
   const scopedEvents = useMemo(
-    () => (mapScope === 'LOCAL' ? localEvents : allEvents),
-    [allEvents, localEvents, mapScope]
+    () => (mapScope === 'LOCAL' ? localEvents : globalEvents),
+    [globalEvents, localEvents, mapScope]
   );
 
   const visibleEvents = useMemo(
-    () => scopedEvents.filter((event) => layerStates[event.type] !== false),
-    [scopedEvents, layerStates]
+    () => scopedEvents.filter((event) => productConfig.enabledMapLayers.includes(event.type) && layerStates[event.type] !== false),
+    [productConfig.enabledMapLayers, scopedEvents, layerStates]
   );
+
+  useEffect(() => {
+    setLayerStates((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((key) => {
+        next[key] = productConfig.enabledMapLayers.includes(key) ? next[key] : false;
+      });
+      return next;
+    });
+  }, [productConfig.enabledMapLayers]);
+
+  useEffect(() => {
+    if (!productConfig.canUseCommunity && activeTab === 'COMMUNITY') {
+      setActiveTab('MY_ALERTS');
+    }
+  }, [activeTab, productConfig.canUseCommunity]);
 
   useEffect(() => {
     const region = mapScope === 'LOCAL' ? localRegion : GLOBAL_REGION;
@@ -297,7 +332,7 @@ const MapHomeScreen = ({ navigation }) => {
           </Text>
 
           <ScrollView style={styles.layersScroll} showsVerticalScrollIndicator={false}>
-            {layers.map((layer) => (
+            {availableLayers.map((layer) => (
               <View key={layer.key} style={styles.layerRow}>
                 <Text style={styles.layerIcon}>{layer.icon}</Text>
                 <Text style={[styles.layerLabel, layerStates[layer.key] && styles.layerLabelActive]}>
@@ -325,7 +360,7 @@ const MapHomeScreen = ({ navigation }) => {
       >
         <View style={styles.bottomSheetContent}>
           <View style={styles.tabBar}>
-            {['MY_ALERTS', 'EVENTS', 'NEWS', 'COMMUNITY'].map((tab) => (
+            {bottomSheetTabs.map((tab) => (
               <TouchableOpacity
                 key={tab}
                 onPress={() => setActiveTab(tab)}

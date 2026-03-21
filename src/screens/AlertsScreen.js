@@ -13,7 +13,8 @@ import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { fetchMyFavorites } from '../lib/api';
 import LeonaHeader from '../components/LeonaHeader';
 import { AppContext } from '../../App';
-import { deriveLocalEvents } from '../lib/locality';
+import { filterEventsForConfig } from '../lib/locality';
+import { limitEventsForProduct } from '../lib/products';
 
 // Helper: "2d ago", "1w ago", etc.
 function getTimeSince(dateStr) {
@@ -47,14 +48,20 @@ const AlertsScreen = ({ navigation }) => {
   // ── Live API data ──
   const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents();
   const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents();
-  const localAlerts = useMemo(
-    () => deriveLocalEvents(myAlerts, worldEvents, userConfig?.location),
-    [myAlerts, userConfig?.location, worldEvents]
+  const filteredMyAlerts = useMemo(
+    () => limitEventsForProduct(
+      filterEventsForConfig(myAlerts.length > 0 ? myAlerts : worldEvents, userConfig, 'local'),
+      userConfig?.product
+    ),
+    [myAlerts, userConfig, worldEvents]
   );
   const globalEvents = useMemo(() => {
-    const myIds = new Set(localAlerts.map((e) => e.id));
-    return worldEvents.filter((e) => !myIds.has(e.id));
-  }, [localAlerts, worldEvents]);
+    const myIds = new Set(filteredMyAlerts.map((e) => e.id));
+    return limitEventsForProduct(
+      filterEventsForConfig(worldEvents, userConfig, 'global').filter((e) => !myIds.has(e.id)),
+      userConfig?.product
+    );
+  }, [filteredMyAlerts, userConfig, worldEvents]);
 
   // ── Favorites ──
   const [favorites, setFavorites] = useState([]);
@@ -89,7 +96,7 @@ const AlertsScreen = ({ navigation }) => {
       ? worldError
       : null;
 
-  const currentEvents = activeTab === 'MY' ? localAlerts
+  const currentEvents = activeTab === 'MY' ? filteredMyAlerts
     : activeTab === 'GLOBAL' ? globalEvents
     : []; // FAVORITES uses its own list
   const orderedEvents = useMemo(() => sortEventsNewestFirst(currentEvents), [currentEvents]);
