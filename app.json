@@ -61,6 +61,7 @@
           "locationAlwaysAndWhenInUsePermission": "LEONA monitors your area in the background to deliver critical safety alerts."
         }
       ],
+      "expo-notifications",
       "expo-local-authentication",
       "expo-web-browser",
       "expo-secure-store"

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useContext, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -10,16 +10,29 @@ import {
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import LeonaHeader from '../components/LeonaHeader';
+import { useAuth } from '../lib/auth';
+import { useProfile } from '../hooks/useEvents';
+import { AppContext } from '../../App';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 
 const MoreScreen = ({ navigation }) => {
+  const { user: clerkUser } = useAuth();
+  const { profile: apiProfile } = useProfile();
+  const { userConfig } = useContext(AppContext);
+  const clerkName = `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim();
+  const displayName = clerkName || apiProfile?.name || userConfig?.fullName || 'Profile';
+  const displayOrg = apiProfile?.org_name || userConfig?.organization || 'Guardian Space Inc.';
+  const displayInitials = useMemo(() => {
+    const parts = displayName.split(' ').filter(Boolean);
+    if (parts.length === 0) return 'U';
+    return parts.slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+  }, [displayName]);
 
   return (
     <SafeAreaView style={styles.container}>
       <LeonaHeader />
 
-      {/* ── Profile Card ── */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.profileCard}
@@ -28,17 +41,16 @@ const MoreScreen = ({ navigation }) => {
         >
           <View style={styles.profileLeft}>
             <View style={styles.profileAvatar}>
-              <Text style={styles.profileInitials}>KM</Text>
+              <Text style={styles.profileInitials}>{displayInitials}</Text>
             </View>
             <View style={styles.profileInfo}>
-              <Text style={styles.profileName}>Kian Mirshahi</Text>
-              <Text style={styles.profileRole}>Admin · Guardian Space Inc.</Text>
+              <Text style={styles.profileName}>{displayName}</Text>
+              <Text style={styles.profileRole}>Admin · {displayOrg}</Text>
             </View>
           </View>
           <Text style={styles.profileChevron}>›</Text>
         </TouchableOpacity>
 
-        {/* Profile & Plan row — directly under profile card */}
         <TouchableOpacity
           style={styles.planRow}
           onPress={() => navigation.navigate('Profile')}
@@ -47,26 +59,23 @@ const MoreScreen = ({ navigation }) => {
           <View style={styles.planDot} />
           <Text style={styles.planLabel}>Enterprise Plan</Text>
           <Text style={styles.planSep}>·</Text>
-          <Text style={styles.planDetail}>Guardian Space Inc.</Text>
+          <Text style={styles.planDetail}>{displayOrg}</Text>
           <Text style={styles.planChevron}>›</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Scrollable area — empty for now, room for future items */}
       <ScrollView
         style={styles.scrollArea}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       />
 
-      {/* LEONA footer — pinned to bottom above settings btn */}
       <View style={styles.footer}>
         <Image source={leonaAvatar} style={styles.footerAvatar} />
         <Text style={styles.footerText}>LEONA v1.3.0</Text>
         <Text style={styles.footerSubtext}>OBSERVA · DIRIGE · PROTEGE</Text>
       </View>
 
-      {/* ── Settings icon — fixed bottom-right ── */}
       <TouchableOpacity
         style={styles.settingsCornerBtn}
         onPress={() => navigation.navigate('Settings')}
@@ -83,8 +92,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
   },
-
-  // Header + Profile Card
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xl,
@@ -136,8 +143,6 @@ const styles = StyleSheet.create({
     fontWeight: '300',
     paddingLeft: spacing.sm,
   },
-
-  // Profile & Plan row under profile card
   planRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -175,8 +180,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '300',
   },
-
-  // Scroll Area
   scrollArea: {
     flex: 1,
   },
@@ -185,11 +188,9 @@ const styles = StyleSheet.create({
     paddingTop: spacing.lg,
     paddingBottom: spacing.xl,
   },
-
-  // Footer — pinned at bottom, above settings corner button
   footer: {
     alignItems: 'center',
-    paddingBottom: 80,   // clears the settings corner button
+    paddingBottom: 80,
     paddingTop: spacing.md,
   },
   footerAvatar: {
@@ -211,8 +212,6 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     opacity: 0.5,
   },
-
-  // Settings icon — fixed bottom-right corner
   settingsCornerBtn: {
     position: 'absolute',
     bottom: spacing.xl,

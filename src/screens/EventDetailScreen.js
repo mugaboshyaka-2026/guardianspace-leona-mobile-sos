@@ -8,10 +8,14 @@ import {
   SafeAreaView,
   Dimensions,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
 import { colors, sevColors, typeIcons, spacing, fonts, sevBg } from '../theme';
 import { getRelatedNews } from '../lib/api';
+
+const mapsModule = Platform.OS === 'web' ? null : require('react-native-maps');
+const MapView = mapsModule?.default;
+const Marker = mapsModule?.Marker;
 
 const { width } = Dimensions.get('window');
 
@@ -100,6 +104,14 @@ const EventDetailScreen = ({ route, navigation }) => {
 
   const renderInlineMap = () => (
     <View style={styles.inlineMapContainer}>
+      {Platform.OS === 'web' ? (
+        <View style={styles.inlineMapFallback}>
+          <Text style={styles.inlineMapFallbackTitle}>Map unavailable on web</Text>
+          <Text style={styles.inlineMapFallbackCoords}>
+            {eventLat.toFixed(4)}, {eventLng.toFixed(4)}
+          </Text>
+        </View>
+      ) : (
       <MapView
         style={styles.inlineMapView}
         mapType={is3D ? 'hybridFlyover' : 'satellite'}
@@ -121,6 +133,7 @@ const EventDetailScreen = ({ route, navigation }) => {
           </View>
         </Marker>
       </MapView>
+      )}
 
       {/* 2D / 3D toggle — top-right corner */}
       <View style={styles.mapDimToggle}>
@@ -611,6 +624,22 @@ const styles = StyleSheet.create({
   },
   inlineMapView: {
     flex: 1,
+  },
+  inlineMapFallback: {
+    flex: 1,
+    backgroundColor: colors.panel,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  inlineMapFallbackTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  inlineMapFallbackCoords: {
+    color: colors.textSec,
+    fontSize: 12,
   },
   mapMarker: {
     width: 44,

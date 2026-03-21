@@ -1,62 +1,82 @@
-/**
- * LEONA Mobile — Auth Context
- * Wraps Clerk auth and exposes user/session to the entire app.
- * Falls back gracefully when Clerk SDK is not installed yet.
- */
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { setAuthToken } from './api';
 import { initRealtime, disconnectRealtime } from './realtime';
 
-// ── Context ──
 const AuthContext = createContext({
   isSignedIn: false,
-  isLoaded: false,
+  isLoaded: true,
   user: null,
-  signOut: () => {},
+  signIn: async () => {},
+  signUp: async () => {},
+  signOut: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
 
-/**
- * AuthProvider — wraps Clerk's ClerkProvider + hooks.
- *
- * When @clerk/clerk-expo is installed:
- *   import { ClerkProvider, useAuth, useUser } from '@clerk/clerk-expo';
- *
- * Until then, this shim auto-signs-in so existing screens keep working.
- */
+function hasClerkExpo() {
+  try {
+    require('@clerk/clerk-expo');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function AuthProvider({ children }) {
-  const [clerkAvailable, setClerkAvailable] = useState(false);
-
-  useEffect(() => {
-    // Check if Clerk SDK is installed
-    try {
-      require('@clerk/clerk-expo');
-      setClerkAvailable(true);
-    } catch {
-      console.log('[LEONA Auth] Clerk SDK not found — running in dev/mock mode');
-      setClerkAvailable(false);
-    }
-  }, []);
-
-  if (clerkAvailable) {
+  if (hasClerkExpo()) {
     return <ClerkAuthProvider>{children}</ClerkAuthProvider>;
   }
 
-  // Dev fallback — pretend signed in, no real token
+  return <MockAuthProvider>{children}</MockAuthProvider>;
+}
+
+function MockAuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+
+  const signIn = useCallback(async ({ email }) => {
+    if (!email?.trim()) {
+      throw new Error('Email is required.');
+    }
+
+    setUser({
+      id: 'dev_user',
+      firstName: email.trim().split('@')[0],
+      lastName: '',
+      emailAddresses: [{ emailAddress: email.trim().toLowerCase() }],
+      imageUrl: null,
+    });
+  }, []);
+
+  const signUp = useCallback(async ({ fullName, email }) => {
+    if (!fullName?.trim() || !email?.trim()) {
+      throw new Error('Name and email are required.');
+    }
+
+    const parts = fullName.trim().split(/\s+/);
+    setUser({
+      id: 'dev_user',
+      firstName: parts[0] || '',
+      lastName: parts.slice(1).join(' '),
+      emailAddresses: [{ emailAddress: email.trim().toLowerCase() }],
+      imageUrl: null,
+    });
+  }, []);
+
+  const signOut = useCallback(async () => {
+    setAuthToken(null);
+    disconnectRealtime();
+    setUser(null);
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
-        isSignedIn: true,
+        isSignedIn: !!user,
         isLoaded: true,
-        user: {
-          id: 'dev_user',
-          firstName: 'Kian',
-          lastName: 'Mirshahi',
-          emailAddresses: [{ emailAddress: 'kian@guardianspace.com' }],
-          imageUrl: null,
-        },
-        signOut: () => {},
+        user,
+        signIn,
+        signUp,
+        signOut,
       }}
     >
       {children}
@@ -64,16 +84,10 @@ export function AuthProvider({ children }) {
   );
 }
 
-/**
- * Real Clerk-based auth provider.
- * Only instantiated when @clerk/clerk-expo is available.
- */
 function ClerkAuthProvider({ children }) {
-  // These imports are deferred so the module doesn't crash if Clerk isn't installed
-  const { ClerkProvider, useAuth: useClerkAuth, useUser: useClerkUser } = require('@clerk/clerk-expo');
+  const { ClerkProvider } = require('@clerk/clerk-expo');
   const { CLERK_PUBLISHABLE_KEY } = require('../config/env');
 
-  // expo-secure-store token cache for Clerk
   let tokenCache;
   try {
     const SecureStore = require('expo-secure-store');
@@ -90,35 +104,78 @@ function ClerkAuthProvider({ children }) {
   }
 
   return (
-    <ClerkProvider
-      publishableKey={CLERK_PUBLISHABLE_KEY}
-      tokenCache={tokenCache}
-    >
+    <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} tokenCache={tokenCache}>
       <ClerkAuthBridge>{children}</ClerkAuthBridge>
     </ClerkProvider>
   );
 }
 
-/**
- * Bridge component that sits inside ClerkProvider and wires
- * Clerk's getToken to our API client + starts Ably realtime.
- */
 function ClerkAuthBridge({ children }) {
-  const { useAuth: useClerkAuth, useUser: useClerkUser } = require('@clerk/clerk-expo');
+  const {
+    useAuth: useClerkAuth,
+    useUser: useClerkUser,
+    useSignIn,
+    useSignUp,
+  } = require('@clerk/clerk-expo');
+
   const { isSignedIn, isLoaded, getToken, signOut } = useClerkAuth();
   const { user } = useClerkUser();
+  const { signIn, setActive: setActiveSignIn, isLoaded: signInLoaded } = useSignIn();
+  const { signUp, setActive: setActiveSignUp, isLoaded: signUpLoaded } = useSignUp();
 
   useEffect(() => {
     if (isSignedIn && getToken) {
-      // Wire Clerk's getToken into our fetch wrapper
       setAuthToken(getToken);
-      // Start Ably connection
       initRealtime().catch(() => {});
-    } else {
-      setAuthToken(null);
-      disconnectRealtime();
+      return;
     }
+
+    setAuthToken(null);
+    disconnectRealtime();
   }, [isSignedIn, getToken]);
+
+  const performSignIn = useCallback(async ({ email, password }) => {
+    if (!signInLoaded) {
+      throw new Error('Authentication is still loading.');
+    }
+
+    const result = await signIn.create({
+      identifier: email.trim(),
+      password,
+    });
+
+    if (result.status !== 'complete') {
+      throw new Error('Sign-in requires additional verification.');
+    }
+
+    await setActiveSignIn({ session: result.createdSessionId });
+  }, [signIn, signInLoaded, setActiveSignIn]);
+
+  const performSignUp = useCallback(async ({ fullName, email, password }) => {
+    if (!signUpLoaded) {
+      throw new Error('Authentication is still loading.');
+    }
+
+    const nameParts = (fullName || '').trim().split(/\s+/);
+    const result = await signUp.create({
+      emailAddress: email.trim(),
+      password,
+      firstName: nameParts[0] || undefined,
+      lastName: nameParts.slice(1).join(' ') || undefined,
+    });
+
+    if (result.status !== 'complete') {
+      throw new Error('Account created, but Clerk still requires verification before sign-in completes.');
+    }
+
+    await setActiveSignUp({ session: result.createdSessionId });
+  }, [setActiveSignUp, signUp, signUpLoaded]);
+
+  const performSignOut = useCallback(async () => {
+    setAuthToken(null);
+    disconnectRealtime();
+    await signOut();
+  }, [signOut]);
 
   return (
     <AuthContext.Provider
@@ -126,7 +183,9 @@ function ClerkAuthBridge({ children }) {
         isSignedIn: !!isSignedIn,
         isLoaded: !!isLoaded,
         user: user || null,
-        signOut,
+        signIn: performSignIn,
+        signUp: performSignUp,
+        signOut: performSignOut,
       }}
     >
       {children}

@@ -13,12 +13,11 @@ import {
   Platform,
 } from 'react-native';
 import { colors, spacing } from '../theme';
-import { COMMUNITY_POSTS, INBOX_THREADS } from '../data/events';
 import LeonaHeader from '../components/LeonaHeader';
 
 // ─── INITIAL DATA ──────────────────────────────────────────────────────────────
-const INITIAL_POSTS = COMMUNITY_POSTS;
-const INITIAL_THREADS = INBOX_THREADS;
+const INITIAL_POSTS = [];
+const INITIAL_THREADS = [];
 
 const SUGGESTED_TAGS = [
   { label: '#wildfire', color: '#FF6B35' },

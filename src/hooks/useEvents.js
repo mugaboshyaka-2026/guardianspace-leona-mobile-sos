@@ -16,8 +16,7 @@ import {
   getLeonaBrief,
   getRelatedNews,
 } from '../lib/api';
-import { onEventUpdate } from '../lib/realtime';
-import { EVENTS, GRI_COUNTRIES, USER_AOIS, COMMUNITY_POSTS, INBOX_THREADS } from '../data/events';
+import { onEventUpdate, subscribeToAOI } from '../lib/realtime';
 
 // Simple in-memory cache
 const cache = {
@@ -32,6 +31,19 @@ const cache = {
 };
 
 const STALE_MS = 60_000; // 1 min
+const subscribedAoiIds = new Set();
+
+export function resetEventCache() {
+  cache.myEvents = null;
+  cache.worldEvents = null;
+  cache.alerts = null;
+  cache.aois = null;
+  cache.dataSources = null;
+  cache.profile = null;
+  cache.favorites = null;
+  cache.lastFetch = {};
+  subscribedAoiIds.clear();
+}
 
 function isStale(key) {
   const t = cache.lastFetch[key];
@@ -40,7 +52,6 @@ function isStale(key) {
 
 /**
  * useMyEvents — returns the user's AOI events.
- * Falls back to mock EVENTS on failure.
  */
 export function useMyEvents() {
   const [events, setEvents] = useState(cache.myEvents || []);
@@ -56,11 +67,9 @@ export function useMyEvents() {
       cache.lastFetch.myEvents = Date.now();
       setEvents(data);
     } catch (err) {
-      console.warn('[useMyEvents] API failed, using mock data:', err.message);
+      console.warn('[useMyEvents] API failed:', err.message);
       setError(err);
-      // Fallback to mock data
-      const fallback = EVENTS.filter((e) => ['ev1', 'ev3', 'ev4', 'ev5'].includes(e.id));
-      setEvents(fallback);
+      setEvents([]);
     } finally {
       setLoading(false);
     }
@@ -86,7 +95,6 @@ export function useMyEvents() {
 
 /**
  * useWorldEvents — returns top global events.
- * Falls back to mock EVENTS on failure.
  */
 export function useWorldEvents() {
   const [events, setEvents] = useState(cache.worldEvents || []);
@@ -102,9 +110,9 @@ export function useWorldEvents() {
       cache.lastFetch.worldEvents = Date.now();
       setEvents(data);
     } catch (err) {
-      console.warn('[useWorldEvents] API failed, using mock data:', err.message);
+      console.warn('[useWorldEvents] API failed:', err.message);
       setError(err);
-      setEvents(EVENTS.filter((e) => e.severity === 'critical' || e.severity === 'high'));
+      setEvents([]);
     } finally {
       setLoading(false);
     }
@@ -153,28 +161,46 @@ export function useAlerts() {
 
 /**
  * useAOIs — returns user's Areas of Interest.
- * Falls back to mock USER_AOIS.
  */
-export function useAOIs() {
+export function useAOIs(enabled = true) {
   const [aois, setAois] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
+  const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
+    if (!enabled) {
+      setAois([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
+    setError(null);
     try {
       const data = await fetchMyAOIs();
       setAois(data.aois || []);
     } catch (err) {
-      console.warn('[useAOIs] API failed, using mock data:', err.message);
-      setAois(USER_AOIS.map((name, i) => ({ id: `aoi_${i}`, name })));
+      console.warn('[useAOIs] API failed:', err.message);
+      setError(err);
+      setAois([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  return { aois, loading, refresh };
+  useEffect(() => {
+    aois.forEach((aoi) => {
+      const aoiId = aoi?.id;
+      if (aoiId && !subscribedAoiIds.has(aoiId)) {
+        subscribeToAOI(aoiId);
+        subscribedAoiIds.add(aoiId);
+      }
+    });
+  }, [aois]);
+
+  return { aois, loading, error, refresh };
 }
 
 /**
@@ -183,14 +209,17 @@ export function useAOIs() {
 export function useDataSources() {
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await fetchDataSources();
       setSources(data);
     } catch (err) {
       console.warn('[useDataSources] API failed:', err.message);
+      setError(err);
       setSources([]);
     } finally {
       setLoading(false);
@@ -199,7 +228,7 @@ export function useDataSources() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  return { sources, loading, refresh };
+  return { sources, loading, error, refresh };
 }
 
 /**
@@ -208,14 +237,17 @@ export function useDataSources() {
 export function useProfile() {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await fetchUserProfile();
       setProfile(data);
     } catch (err) {
       console.warn('[useProfile] API failed:', err.message);
+      setError(err);
       setProfile(null);
     } finally {
       setLoading(false);
@@ -224,7 +256,7 @@ export function useProfile() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  return { profile, loading, refresh };
+  return { profile, loading, error, refresh };
 }
 
 /**
@@ -239,6 +271,11 @@ export function useLeonaChat() {
     },
   ]);
   const [sending, setSending] = useState(false);
+  const messagesRef = useRef(messages);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const send = useCallback(async (userText) => {
     const userMsg = { id: Date.now().toString(), type: 'user', text: userText };
@@ -248,7 +285,7 @@ export function useLeonaChat() {
     try {
       // Build messages array for API
       const apiMessages = [
-        ...messages.map((m) => ({
+        ...messagesRef.current.map((m) => ({
           role: m.type === 'agent' ? 'assistant' : 'user',
           content: m.text,
         })),
@@ -271,7 +308,7 @@ export function useLeonaChat() {
     } finally {
       setSending(false);
     }
-  }, [messages]);
+  }, []);
 
   return { messages, sending, send, setMessages };
 }
@@ -282,6 +319,7 @@ export function useLeonaChat() {
 export function useLeonaBrief(context) {
   const [brief, setBrief] = useState(null);
   const [loading, setLoading] = useState(true);
+  const contextKey = JSON.stringify(context ?? null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -294,7 +332,7 @@ export function useLeonaBrief(context) {
     } finally {
       setLoading(false);
     }
-  }, [context]);
+  }, [contextKey]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useContext } from 'react';
 import {
   View,
   StyleSheet,
@@ -12,6 +12,8 @@ import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { fetchMyFavorites } from '../lib/api';
 import LeonaHeader from '../components/LeonaHeader';
+import { AppContext } from '../../App';
+import { deriveLocalEvents } from '../lib/locality';
 
 // Helper: "2d ago", "1w ago", etc.
 function getTimeSince(dateStr) {
@@ -31,15 +33,20 @@ function getTimeSince(dateStr) {
 }
 
 const AlertsScreen = ({ navigation }) => {
+  const { userConfig } = useContext(AppContext);
   const [activeTab, setActiveTab] = useState('MY');
 
   // ── Live API data ──
-  const { events: myAlerts, loading: myLoading } = useMyEvents();
-  const { events: worldEvents, loading: worldLoading } = useWorldEvents();
+  const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents();
+  const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents();
+  const localAlerts = useMemo(
+    () => deriveLocalEvents(myAlerts, worldEvents, userConfig?.location),
+    [myAlerts, userConfig?.location, worldEvents]
+  );
   const globalEvents = useMemo(() => {
-    const myIds = new Set(myAlerts.map((e) => e.id));
+    const myIds = new Set(localAlerts.map((e) => e.id));
     return worldEvents.filter((e) => !myIds.has(e.id));
-  }, [myAlerts, worldEvents]);
+  }, [localAlerts, worldEvents]);
 
   // ── Favorites ──
   const [favorites, setFavorites] = useState([]);
@@ -63,7 +70,18 @@ const AlertsScreen = ({ navigation }) => {
     if (activeTab === 'FAVORITES') loadFavorites();
   }, [activeTab, loadFavorites]);
 
-  const currentEvents = activeTab === 'MY' ? myAlerts
+  const isLoading = activeTab === 'MY'
+    ? myLoading
+    : activeTab === 'GLOBAL'
+      ? worldLoading
+      : favLoading;
+  const activeError = activeTab === 'MY'
+    ? myError
+    : activeTab === 'GLOBAL'
+      ? worldError
+      : null;
+
+  const currentEvents = activeTab === 'MY' ? localAlerts
     : activeTab === 'GLOBAL' ? globalEvents
     : []; // FAVORITES uses its own list
 
@@ -166,7 +184,17 @@ const AlertsScreen = ({ navigation }) => {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {grouped.map((section) => (
+          {isLoading && (
+            <ActivityIndicator color={colors.blue} style={styles.loadingIndicator} />
+          )}
+
+          {!isLoading && activeError && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>Unable to load alerts right now</Text>
+            </View>
+          )}
+
+          {!isLoading && !activeError && grouped.map((section) => (
             <View key={section.key} style={styles.section}>
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionTitleRow}>
@@ -183,7 +211,7 @@ const AlertsScreen = ({ navigation }) => {
             </View>
           ))}
 
-          {grouped.length === 0 && (
+          {!isLoading && !activeError && grouped.length === 0 && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>No alerts in this category</Text>
             </View>
@@ -329,6 +357,7 @@ const styles = StyleSheet.create({
   alertTime: { color: colors.textDim, fontSize: 10, fontWeight: '500' },
   emptyState: { paddingVertical: 60, alignItems: 'center', gap: 8 },
   emptyText: { color: colors.textDim, fontSize: 13 },
+  loadingIndicator: { paddingVertical: 40 },
   bottomSpacer: { height: spacing.xl },
 
   // Favorites tab inner (star + label)

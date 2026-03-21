@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo, useContext } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image, Animated } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -18,6 +18,10 @@ import DataSourcesScreen from '../screens/DataSourcesScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SubscriptionScreen from '../screens/SubscriptionScreen';
 import CallScreen from '../screens/CallScreen';
+import { useMyEvents } from '../hooks/useEvents';
+import { useWorldEvents } from '../hooks/useEvents';
+import { AppContext } from '../../App';
+import { deriveLocalEvents } from '../lib/locality';
 
 // LEONA avatar image
 const leonaAvatar = require('../assets/leona-avatar.png');
@@ -44,6 +48,7 @@ const AlertsStack = () => (
 const LeonaStack = () => (
   <Stack.Navigator screenOptions={screenOpts}>
     <Stack.Screen name="LeonaChat" component={LeonaChatScreen} />
+    <Stack.Screen name="Call" component={CallScreen} />
   </Stack.Navigator>
 );
 
@@ -171,6 +176,15 @@ const LeonaTabButton = ({ onPress, accessibilityState }) => {
 };
 
 export const AppNavigator = () => {
+  const { userConfig } = useContext(AppContext);
+  const { events: myEvents } = useMyEvents();
+  const { events: worldEvents } = useWorldEvents();
+  const localEvents = useMemo(
+    () => deriveLocalEvents(myEvents, worldEvents, userConfig?.location),
+    [myEvents, userConfig?.location, worldEvents]
+  );
+  const alertsBadge = localEvents.length > 0 ? localEvents.length : undefined;
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -195,7 +209,7 @@ export const AppNavigator = () => {
         component={AlertsStack}
         options={{
           title: 'ALERTS',
-          tabBarBadge: 3,
+          tabBarBadge: alertsBadge,
           tabBarBadgeStyle: styles.badge,
           tabBarIcon: ({ color, focused }) => <TabIcon label="ALERTS" color={color} focused={focused} />,
         }}
@@ -213,8 +227,6 @@ export const AppNavigator = () => {
         component={CommunityStack}
         options={{
           title: 'FEED',
-          tabBarBadge: 5,
-          tabBarBadgeStyle: styles.feedBadge,
           tabBarIcon: ({ color, focused }) => <SonarIcon color={color} focused={focused} />,
         }}
       />

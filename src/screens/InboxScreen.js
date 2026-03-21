@@ -11,7 +11,6 @@ import {
   Modal,
 } from 'react-native';
 import { colors, spacing } from '../theme';
-import { INBOX_THREADS } from '../data/events';
 
 const InboxScreen = ({ navigation }) => {
   const [activeTab, setActiveTab] = useState('ALL');
@@ -19,7 +18,7 @@ const InboxScreen = ({ navigation }) => {
   const [showCompose, setShowCompose] = useState(false);
   const [composeRecipient, setComposeRecipient] = useState('');
   const [composeMessage, setComposeMessage] = useState('');
-  const [threads, setThreads] = useState(INBOX_THREADS);
+  const [threads, setThreads] = useState([]);
 
   const suggestedContacts = [
     '# ops-critical',

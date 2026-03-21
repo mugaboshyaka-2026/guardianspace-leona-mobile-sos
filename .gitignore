@@ -35,10 +35,14 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
-
+.env
 # generated native folders
 /ios
 /android
 node_modules/
 *.html
 PRE_BUILD_REVIEW.txt
+.expo-export-check/
+.expo-android-export-test
+.expo-web-export-test
+.expo-export-test/
