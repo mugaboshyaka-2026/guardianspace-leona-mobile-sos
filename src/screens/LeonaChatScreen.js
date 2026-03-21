@@ -13,6 +13,7 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents, useAOIs, useLeonaChat, useLeonaBrief } from '../hooks/useEvents';
@@ -344,6 +345,16 @@ const LeonaChatScreen = ({ navigation }) => {
     );
   };
 
+  const renderTypingIndicator = () => (
+    <View style={[styles.messageBubbleContainer, styles.agentContainer]}>
+      <Image source={leonaAvatar} style={styles.chatAvatarImage} />
+      <View style={[styles.messageBubble, styles.agentBubble, styles.typingBubble]}>
+        <ActivityIndicator size="small" color={colors.blueLight} />
+        <Text style={styles.typingText}>LEONA is responding...</Text>
+      </View>
+    </View>
+  );
+
   const handleAttachPress = () => {
     // TODO: implement file picker (expo-document-picker or expo-image-picker)
     console.log('[LEONA] Attach file pressed');
@@ -370,6 +381,7 @@ const LeonaChatScreen = ({ navigation }) => {
         renderItem={renderMessage}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.messagesList}
+        ListFooterComponent={sending ? renderTypingIndicator : null}
         onContentSizeChange={scrollToBottom}
         keyboardShouldPersistTaps="handled"
       />
@@ -389,11 +401,11 @@ const LeonaChatScreen = ({ navigation }) => {
           maxLength={1000}
         />
         <TouchableOpacity
-          style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+          style={[styles.sendButton, (!inputText.trim() || sending) && styles.sendButtonDisabled]}
           onPress={handleSend}
-          disabled={!inputText.trim()}
+          disabled={!inputText.trim() || sending}
         >
-          <Text style={styles.sendButtonText}>→</Text>
+          {sending ? <ActivityIndicator size="small" color={colors.white} /> : <Text style={styles.sendButtonText}>→</Text>}
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -805,9 +817,11 @@ const styles = StyleSheet.create({
   messageBubble: { maxWidth: width * 0.72, paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderRadius: 12 },
   agentBubble: { backgroundColor: colors.purpleDim, borderLeftColor: colors.purple, borderLeftWidth: 2 },
   userBubble: { backgroundColor: colors.blueDim, borderRightColor: colors.blue, borderRightWidth: 2 },
+  typingBubble: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   messageText: { fontSize: 14, lineHeight: 20 },
   agentText: { color: colors.text },
   userText: { color: colors.blueLight },
+  typingText: { color: colors.textSec, fontSize: 13, fontWeight: '500' },
 
   // Quick chips — compact pills above chat, wrapping to show all 6
   chipsSection: {

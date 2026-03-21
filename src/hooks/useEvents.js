@@ -50,6 +50,27 @@ function isStale(key) {
   return !t || Date.now() - t > STALE_MS;
 }
 
+function mergeEventToFront(existing = [], incoming) {
+  if (!incoming?.id && !incoming?.event_id) {
+    return existing;
+  }
+
+  const incomingId = incoming.id || incoming.event_id;
+  const normalizedIncoming = {
+    ...incoming,
+    id: incomingId,
+    created_at: incoming.created_at || incoming.event_time || new Date().toISOString(),
+  };
+
+  const next = [normalizedIncoming, ...existing.filter((event) => event.id !== incomingId)];
+  next.sort((a, b) => {
+    const aTime = new Date(a.created_at || 0).getTime();
+    const bTime = new Date(b.created_at || 0).getTime();
+    return bTime - aTime;
+  });
+  return next;
+}
+
 /**
  * useMyEvents — returns the user's AOI events.
  */
@@ -82,8 +103,23 @@ export function useMyEvents() {
   // Listen for real-time updates
   useEffect(() => {
     const unsub = onEventUpdate((msg) => {
-      if (msg.type === 'new' || msg.type === 'update') {
-        // Re-fetch when we get a push update
+      if (msg.type === 'aoi_alert' && msg.event) {
+        setEvents((prev) => {
+          const next = mergeEventToFront(prev, msg.event);
+          cache.myEvents = next;
+          cache.lastFetch.myEvents = Date.now();
+          return next;
+        });
+        refresh();
+      }
+
+      if ((msg.type === 'new' || msg.type === 'update') && msg.event) {
+        setEvents((prev) => {
+          const next = mergeEventToFront(prev, msg.event);
+          cache.myEvents = next;
+          cache.lastFetch.myEvents = Date.now();
+          return next;
+        });
         refresh();
       }
     });
