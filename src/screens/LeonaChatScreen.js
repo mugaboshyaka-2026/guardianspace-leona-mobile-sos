@@ -113,6 +113,10 @@ const LeonaChatScreen = ({ navigation }) => {
   }), [USER_AOIS, myEvents.length, mySeverityCounts, myTopEvents]);
   const { brief: worldBrief } = useLeonaBrief(worldBriefContext);
   const { brief: myBrief } = useLeonaBrief(myBriefContext);
+  const worldNarrative = extractBriefText(worldBrief)
+    || `${EVENTS.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`;
+  const myNarrative = extractBriefText(myBrief)
+    || `Active monitoring across ${USER_AOIS.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`;
 
   const quickChips = [
     'Critical events',
@@ -163,14 +167,14 @@ const LeonaChatScreen = ({ navigation }) => {
           </View>
         </View>
         <View style={styles.gtiRow}>
-          <Text style={styles.gtiScore}>72</Text>
+          <Text style={styles.gtiScore}>{worldThreatScore}</Text>
           <Text style={styles.gtiMax}>/100</Text>
           <View style={styles.gtiTrend}>
-            <Text style={styles.gtiTrendText}>↑ +3</Text>
+            <Text style={styles.gtiTrendText}>{severityCounts.critical} critical</Text>
           </View>
         </View>
         <View style={styles.gtiBar}>
-          <View style={[styles.gtiBarFill, { width: '72%' }]} />
+          <View style={[styles.gtiBarFill, { width: `${worldThreatScore}%` }]} />
         </View>
       </View>
 
@@ -198,7 +202,7 @@ const LeonaChatScreen = ({ navigation }) => {
       {/* Narrative */}
       <View style={styles.narrativeCard}>
         <Text style={styles.narrativeText}>
-          {EVENTS.length} active events globally. {severityCounts.critical} critical situations requiring immediate attention. Threat level elevated across 3 continental regions.
+          {worldNarrative}
         </Text>
       </View>
 
@@ -226,17 +230,17 @@ const LeonaChatScreen = ({ navigation }) => {
       {/* Quick Stats */}
       <View style={styles.myBriefStats}>
         <View style={styles.myBriefStat}>
-          <Text style={[styles.myBriefStatNum, { color: colors.critical }]}>2</Text>
+          <Text style={[styles.myBriefStatNum, { color: colors.critical }]}>{mySeverityCounts.critical}</Text>
           <Text style={styles.myBriefStatLabel}>Critical</Text>
         </View>
         <View style={styles.myBriefStatDivider} />
         <View style={styles.myBriefStat}>
-          <Text style={[styles.myBriefStatNum, { color: colors.high }]}>2</Text>
+          <Text style={[styles.myBriefStatNum, { color: colors.high }]}>{mySeverityCounts.high}</Text>
           <Text style={styles.myBriefStatLabel}>High</Text>
         </View>
         <View style={styles.myBriefStatDivider} />
         <View style={styles.myBriefStat}>
-          <Text style={[styles.myBriefStatNum, { color: colors.blue }]}>4</Text>
+          <Text style={[styles.myBriefStatNum, { color: colors.blue }]}>{USER_AOIS.length}</Text>
           <Text style={styles.myBriefStatLabel}>AOIs</Text>
         </View>
       </View>
@@ -245,14 +249,14 @@ const LeonaChatScreen = ({ navigation }) => {
       <View style={styles.narrativeCard}>
         <Text style={styles.narrativeSectionTitle}>SITUATION SUMMARY</Text>
         <Text style={styles.narrativeText}>
-          Active monitoring across your {USER_AOIS.length} Areas of Interest. Los Angeles Wildfire Complex (CRITICAL) has expanded to 47,200 acres with mandatory evacuations in 7 communities. Ukraine conflict escalation (CRITICAL) showing increased cross-border activity. Horn of Africa drought crisis (HIGH) affecting 22 million people. Bangladesh flooding (HIGH) has displaced 2.1 million with Brahmaputra River at danger crest.
+          {myNarrative}
         </Text>
       </View>
 
       {/* AOI Events */}
       <View style={styles.briefSection}>
         <Text style={styles.briefSectionTitle}>YOUR EVENTS</Text>
-        {EVENTS.filter(e => ['ev1', 'ev3', 'ev4', 'ev5'].includes(e.id)).map((event) => (
+        {myTopEvents.map((event) => (
           <TouchableOpacity
             key={event.id}
             style={styles.briefEventRow}

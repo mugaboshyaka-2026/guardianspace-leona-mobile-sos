@@ -275,6 +275,34 @@ export async function startTavusConversation(context) {
   });
 }
 
+export async function getTavusConversation() {
+  return await request('/api/tavus/conversation');
+}
+
+export async function endTavusConversation() {
+  return await request('/api/tavus/conversation', { method: 'DELETE' });
+}
+
+export async function syncTavusPersona(body = {}) {
+  return await request('/api/tavus/sync-persona', { method: 'POST', body });
+}
+
+export async function getTavusBrief(body = {}) {
+  return await request('/api/tavus/brief', { method: 'POST', body });
+}
+
+export async function sendTavusUtterance(body = {}) {
+  return await request('/api/tavus/utterance', { method: 'POST', body });
+}
+
+export async function tavusChatCompletions(body = {}) {
+  return await request('/api/tavus/llm/chat/completions', { method: 'POST', body });
+}
+
+export async function tavusLlmProxy(body = {}) {
+  return await request('/api/tavus/llm', { method: 'POST', body });
+}
+
 // ── User Profile ──
 
 export async function fetchUserProfile() {
