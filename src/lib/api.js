@@ -200,6 +200,13 @@ export async function fetchAlerts() {
   return data.alerts || [];
 }
 
+export async function registerDevicePushToken(payload) {
+  return await request('/api/notifications/devices', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
 // ── Data Sources ──
 
 export async function fetchDataSources() {
@@ -275,7 +282,7 @@ export async function getAblyToken() {
 
 export async function startTavusConversation(context) {
   return await request('/api/tavus/conversation', {
-    method: 'POST', body: context ? { context } : {},
+    method: 'POST', body: context || {},
   });
 }
 

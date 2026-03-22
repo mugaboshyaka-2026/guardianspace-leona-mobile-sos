@@ -14,6 +14,7 @@ try {
 const deliveredKeys = new Set();
 let initialized = false;
 let responseSubscription = null;
+let lastConsumedResponseId = null;
 
 if (Notifications?.setNotificationHandler) {
   Notifications.setNotificationHandler({
@@ -65,7 +66,7 @@ export async function initNotifications() {
 
   if (finalStatus !== 'granted') {
     console.warn('[LEONA Notifications] Permission not granted');
-    return;
+    return null;
   }
 
   try {
@@ -80,6 +81,24 @@ export async function initNotifications() {
   }
 
   return null;
+}
+
+export async function getExpoPushToken() {
+  if (!Notifications) {
+    return null;
+  }
+
+  try {
+    const projectId = getProjectId();
+    if (!projectId) {
+      return null;
+    }
+    const token = await Notifications.getExpoPushTokenAsync({ projectId });
+    return token?.data || null;
+  } catch (error) {
+    console.warn('[LEONA Notifications] Explicit push token fetch failed:', error.message);
+    return null;
+  }
 }
 
 function buildRealtimeNotification(update) {
@@ -176,4 +195,29 @@ export function addNotificationResponseListener(listener) {
     responseSubscription = null;
     console.log('[LEONA Notifications] Response listener removed');
   };
+}
+
+export async function consumeLastNotificationResponse() {
+  if (!Notifications?.getLastNotificationResponseAsync) {
+    return null;
+  }
+
+  const response = await Notifications.getLastNotificationResponseAsync();
+  const identifier =
+    response?.notification?.request?.identifier
+    || response?.notification?.request?.content?.data?.event?.id
+    || response?.notification?.request?.content?.data?.event?.event_id
+    || null;
+
+  if (!response || (identifier && identifier === lastConsumedResponseId)) {
+    return null;
+  }
+
+  lastConsumedResponseId = identifier;
+
+  if (Notifications.clearLastNotificationResponseAsync) {
+    await Notifications.clearLastNotificationResponseAsync().catch(() => {});
+  }
+
+  return response;
 }

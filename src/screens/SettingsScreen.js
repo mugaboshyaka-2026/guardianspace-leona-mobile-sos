@@ -7,31 +7,17 @@ import {
   Switch,
   TouchableOpacity,
   SafeAreaView,
-  Alert,
-  ActivityIndicator,
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import { AppContext } from '../../App';
 import { PRODUCT_CONFIGS, getProductConfig } from '../lib/products';
-import { resetEventCache, useAOIs } from '../hooks/useEvents';
-import { addAOI, deleteAOI } from '../lib/api';
-import { getLocationCoordinates, getLocationMetadata } from '../lib/locality';
-
-const DEFAULT_AOI_SUGGESTIONS = [
-  'Los Angeles, CA',
-  'New York, US',
-  'London, UK',
-  'Johannesburg, South Africa',
-  'Dubai, UAE',
-  'Singapore',
-  'Sydney, Australia',
-];
+import { useAOIs } from '../hooks/useEvents';
 
 const SettingsScreen = ({ navigation }) => {
   const { userConfig, setUserConfig } = useContext(AppContext);
   const productConfig = getProductConfig(userConfig?.product);
   const plans = Object.values(PRODUCT_CONFIGS);
-  const { aois, refresh: refreshAois } = useAOIs();
+  const { aois } = useAOIs();
   const currentAois = aois.map((aoi) => ({
     id: aoi?.id,
     name: aoi?.name || aoi?.location_name || aoi?.location || String(aoi),
@@ -49,74 +35,12 @@ const SettingsScreen = ({ navigation }) => {
   const [darkMode, setDarkMode] = useState(true);
   const [mapType, setMapType] = useState('2D');
   const [refreshInterval, setRefreshInterval] = useState('1m');
-  const [aoiBusy, setAoiBusy] = useState(false);
 
   const handlePlanChange = (planId) => {
     setUserConfig((prev) => ({
       ...(prev || {}),
       product: planId,
     }));
-  };
-
-  const syncUserConfigAois = (nextAois) => {
-    setUserConfig((prev) => ({
-      ...(prev || {}),
-      aois: nextAois,
-      location: nextAois[0] || prev?.location,
-    }));
-  };
-
-  const handleAddAoi = async (aoiName) => {
-    const existing = new Set(currentAois.map((aoi) => aoi.name.toLowerCase()));
-    if (existing.has(aoiName.toLowerCase())) {
-      return;
-    }
-
-    const coordinates = getLocationCoordinates(aoiName);
-    const metadata = getLocationMetadata(aoiName);
-    if (!coordinates || !metadata) {
-      Alert.alert('Unsupported AOI', 'This location is not available in the mobile preset list yet.');
-      return;
-    }
-
-    setAoiBusy(true);
-    try {
-      await addAOI({
-        name: aoiName,
-        city: metadata.city,
-        country_code: metadata.country_code,
-        lat: coordinates.lat,
-        lng: coordinates.lng,
-        radius_km: Number(userConfig?.radius) || 50,
-        is_primary: currentAois.length === 0,
-      });
-      resetEventCache();
-      await refreshAois();
-      syncUserConfigAois([...currentAois.map((aoi) => aoi.name), aoiName]);
-    } catch (error) {
-      Alert.alert('AOI add failed', error?.message || 'Unable to add this area of interest.');
-    } finally {
-      setAoiBusy(false);
-    }
-  };
-
-  const handleRemoveAoi = async (aoi) => {
-    if (!aoi?.id) {
-      Alert.alert('AOI remove failed', 'This AOI cannot be removed because it has no server id.');
-      return;
-    }
-
-    setAoiBusy(true);
-    try {
-      await deleteAOI(aoi.id);
-      resetEventCache();
-      await refreshAois();
-      syncUserConfigAois(currentAois.filter((item) => item.id !== aoi.id).map((item) => item.name));
-    } catch (error) {
-      Alert.alert('AOI remove failed', error?.message || 'Unable to remove this area of interest.');
-    } finally {
-      setAoiBusy(false);
-    }
   };
 
   return (
@@ -232,48 +156,25 @@ const SettingsScreen = ({ navigation }) => {
             <View style={styles.settingLabel}>
               <Text style={styles.settingText}>Current AOIs</Text>
               <Text style={styles.subtitle}>
-                Add or remove supported AOI presets directly here.
+                AOI editing is not available in Settings right now. Use this list to review what is active.
               </Text>
             </View>
             <View style={styles.planOptions}>
               {currentAois.length > 0 ? (
                 currentAois.map((aoi, idx) => (
-                  <TouchableOpacity
-                    key={`${aoi.name}-${idx}`}
-                    style={[styles.planPill, { borderColor: colors.blue }]}
-                    onPress={() => handleRemoveAoi(aoi)}
-                    disabled={aoiBusy}
-                  >
-                    <Text style={[styles.planPillText, { color: colors.blue }]}>{aoi.name} ×</Text>
-                  </TouchableOpacity>
+                  <View key={`${aoi.name}-${idx}`} style={[styles.planPill, { borderColor: colors.blue }]}>
+                    <Text style={[styles.planPillText, { color: colors.blue }]}>{aoi.name}</Text>
+                  </View>
                 ))
               ) : (
                 <Text style={styles.subtitle}>No AOIs are configured on this account.</Text>
               )}
             </View>
             <View style={styles.aoiHelpBox}>
-              <Text style={styles.aoiHelpTitle}>Add AOI presets</Text>
-              <View style={styles.planOptions}>
-                {DEFAULT_AOI_SUGGESTIONS.map((aoi) => {
-                  const isActive = currentAois.some((item) => item.name.toLowerCase() === aoi.toLowerCase());
-                  return (
-                    <TouchableOpacity
-                      key={aoi}
-                      style={[
-                        styles.planPill,
-                        { borderColor: colors.purple },
-                        isActive && { opacity: 0.45 },
-                      ]}
-                      onPress={() => handleAddAoi(aoi)}
-                      disabled={isActive || aoiBusy}
-                    >
-                      <Text style={[styles.planPillText, { color: colors.purpleLight }]}>{aoi}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              {aoiBusy && <ActivityIndicator color={colors.blue} style={{ paddingTop: spacing.sm }} />}
-              <Text style={styles.aoiHelpText}>Tap an active AOI to remove it. Tap a preset below to add it.</Text>
+              <Text style={styles.aoiHelpTitle}>AOI changes</Text>
+              <Text style={styles.aoiHelpText}>
+                AOI add and remove actions have been disabled in Settings. Use the setup flow to change active areas of interest.
+              </Text>
             </View>
           </View>
         </View>

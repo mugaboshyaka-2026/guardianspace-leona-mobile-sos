@@ -8,6 +8,7 @@ import {
   SafeAreaView,
   ActivityIndicator,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { fetchMyFavorites } from '../lib/api';
@@ -15,6 +16,7 @@ import LeonaHeader from '../components/LeonaHeader';
 import { AppContext } from '../../App';
 import { filterEventsForConfig } from '../lib/locality';
 import { limitEventsForProduct } from '../lib/products';
+import { getViewedAlertsMap, markAlertViewed } from '../lib/viewedAlerts';
 
 // Helper: "2d ago", "1w ago", etc.
 function getTimeSince(dateStr) {
@@ -41,9 +43,10 @@ function sortEventsNewestFirst(events = []) {
   });
 }
 
-const AlertsScreen = ({ navigation }) => {
+const AlertsScreen = ({ navigation, route }) => {
   const { userConfig } = useContext(AppContext);
   const [activeTab, setActiveTab] = useState('MY');
+  const [viewedAlerts, setViewedAlerts] = useState({});
 
   // ── Live API data ──
   const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents();
@@ -80,10 +83,29 @@ const AlertsScreen = ({ navigation }) => {
     }
   }, []);
 
+  const loadViewedAlerts = useCallback(async () => {
+    const data = await getViewedAlertsMap().catch((err) => {
+      console.warn('[Alerts] Viewed alerts fetch failed:', err.message);
+      return {};
+    });
+    setViewedAlerts(data || {});
+  }, []);
+
   // Fetch favorites when the tab is selected
   useEffect(() => {
     if (activeTab === 'FAVORITES') loadFavorites();
   }, [activeTab, loadFavorites]);
+
+  useFocusEffect(useCallback(() => {
+    loadViewedAlerts();
+  }, [loadViewedAlerts]));
+
+  useEffect(() => {
+    const nextTab = route?.params?.activeTab;
+    if (nextTab === 'MY' || nextTab === 'GLOBAL' || nextTab === 'FAVORITES') {
+      setActiveTab(nextTab);
+    }
+  }, [route?.params?.activeTab]);
 
   const isLoading = activeTab === 'MY'
     ? myLoading
@@ -100,6 +122,19 @@ const AlertsScreen = ({ navigation }) => {
     : activeTab === 'GLOBAL' ? globalEvents
     : []; // FAVORITES uses its own list
   const orderedEvents = useMemo(() => sortEventsNewestFirst(currentEvents), [currentEvents]);
+  const viewedIds = useMemo(() => new Set(Object.keys(viewedAlerts || {})), [viewedAlerts]);
+  const activeEvents = useMemo(() => {
+    if (activeTab !== 'MY') {
+      return orderedEvents;
+    }
+    return orderedEvents.filter((event) => !viewedIds.has(String(event.id)));
+  }, [activeTab, orderedEvents, viewedIds]);
+  const viewedEvents = useMemo(() => {
+    if (activeTab !== 'MY') {
+      return [];
+    }
+    return orderedEvents.filter((event) => viewedIds.has(String(event.id)));
+  }, [activeTab, orderedEvents, viewedIds]);
 
   // Group by severity
   const grouped = useMemo(() => {
@@ -109,12 +144,12 @@ const AlertsScreen = ({ navigation }) => {
       { key: 'elevated', title: 'ELEVATED', color: sevColors.elevated, data: [] },
       { key: 'monitoring', title: 'MONITORING', color: sevColors.monitoring, data: [] },
     ];
-    orderedEvents.forEach((e) => {
+    activeEvents.forEach((e) => {
       const g = groups.find((g) => g.key === e.severity);
       if (g) g.data.push(e);
     });
     return groups.filter((g) => g.data.length > 0);
-  }, [orderedEvents]);
+  }, [activeEvents]);
 
   useEffect(() => {
     console.log('[Alerts] filter state', {
@@ -129,7 +164,11 @@ const AlertsScreen = ({ navigation }) => {
     });
   }, [activeTab, filteredMyAlerts.length, globalEvents.length, myAlerts.length, userConfig, worldEvents.length]);
 
-  const handleAlertPress = (event) => {
+  const handleAlertPress = async (event) => {
+    await markAlertViewed(event).catch((err) => {
+      console.warn('[Alerts] Mark viewed failed:', err.message);
+    });
+    await loadViewedAlerts();
     navigation.navigate('EventDetail', { event });
   };
 
@@ -138,25 +177,25 @@ const AlertsScreen = ({ navigation }) => {
     return times[severity] || '5m';
   };
 
-  const renderAlertRow = (event) => (
+  const renderAlertRow = (event, { viewed = false } = {}) => (
     <TouchableOpacity
       key={event.id}
       onPress={() => handleAlertPress(event)}
       activeOpacity={0.6}
-      style={styles.alertRow}
+      style={[styles.alertRow, viewed && styles.alertRowViewed]}
     >
-      <View style={[styles.iconContainer, { borderColor: sevColors[event.severity] || colors.border }]}>
+      <View style={[styles.iconContainer, viewed && styles.iconContainerViewed, { borderColor: sevColors[event.severity] || colors.border }]}>
         <Text style={styles.iconEmoji}>{typeIcons[event.type] || '📍'}</Text>
       </View>
 
       <View style={styles.alertContent}>
-        <Text style={styles.alertTitle} numberOfLines={2}>{event.title}</Text>
-        <Text style={styles.alertLocation} numberOfLines={1}>{event.location}</Text>
+        <Text style={[styles.alertTitle, viewed && styles.alertTitleViewed]} numberOfLines={2}>{event.title}</Text>
+        <Text style={[styles.alertLocation, viewed && styles.alertLocationViewed]} numberOfLines={1}>{event.location}</Text>
       </View>
 
       <View style={styles.alertRight}>
-        <View style={[styles.severityPill, { backgroundColor: `${sevColors[event.severity]}20`, borderColor: sevColors[event.severity] }]}>
-          <Text style={[styles.severityPillText, { color: sevColors[event.severity] }]}>
+        <View style={[styles.severityPill, viewed && styles.severityPillViewed, { backgroundColor: `${sevColors[event.severity]}20`, borderColor: sevColors[event.severity] }]}>
+          <Text style={[styles.severityPillText, viewed ? styles.severityPillTextViewed : { color: sevColors[event.severity] }]}>
             {event.severity.toUpperCase()}
           </Text>
         </View>
@@ -240,7 +279,24 @@ const AlertsScreen = ({ navigation }) => {
             </View>
           ))}
 
-          {!isLoading && !activeError && grouped.length === 0 && (
+          {!isLoading && !activeError && activeTab === 'MY' && viewedEvents.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionTitleRow}>
+                  <View style={[styles.sectionDot, styles.viewedSectionDot]} />
+                  <Text style={[styles.sectionTitle, styles.viewedSectionTitle]}>VIEWED</Text>
+                </View>
+                <View style={[styles.countBadge, styles.viewedCountBadge]}>
+                  <Text style={[styles.countBadgeText, styles.viewedCountBadgeText]}>{viewedEvents.length}</Text>
+                </View>
+              </View>
+              <View style={styles.alertsList}>
+                {viewedEvents.map((event) => renderAlertRow(event, { viewed: true }))}
+              </View>
+            </View>
+          )}
+
+          {!isLoading && !activeError && grouped.length === 0 && viewedEvents.length === 0 && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>No alerts in this category</Text>
             </View>
@@ -366,6 +422,11 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     gap: spacing.md,
   },
+  alertRowViewed: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderColor: 'rgba(255,255,255,0.06)',
+    opacity: 0.72,
+  },
   iconContainer: {
     width: 40,
     height: 40,
@@ -376,18 +437,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexShrink: 0,
   },
+  iconContainerViewed: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
   iconEmoji: { fontSize: 18 },
   alertContent: { flex: 1, gap: 2 },
   alertTitle: { color: colors.text, fontSize: 13, fontWeight: '600' },
+  alertTitleViewed: { color: colors.textSec },
   alertLocation: { color: colors.textSec, fontSize: 11 },
+  alertLocationViewed: { color: colors.textDim },
   alertRight: { alignItems: 'flex-end', gap: spacing.xs, flexShrink: 0 },
   severityPill: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: 4, borderWidth: 1 },
+  severityPillViewed: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
   severityPillText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
+  severityPillTextViewed: { color: colors.textDim },
   alertTime: { color: colors.textDim, fontSize: 10, fontWeight: '500' },
   emptyState: { paddingVertical: 60, alignItems: 'center', gap: 8 },
   emptyText: { color: colors.textDim, fontSize: 13 },
   loadingIndicator: { paddingVertical: 40 },
   bottomSpacer: { height: spacing.xl },
+  viewedSectionDot: { backgroundColor: colors.textDim },
+  viewedSectionTitle: { color: colors.textDim },
+  viewedCountBadge: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  viewedCountBadgeText: { color: colors.textDim },
 
   // Favorites tab inner (star + label)
   favTabInner: {

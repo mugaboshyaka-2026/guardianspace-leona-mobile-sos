@@ -9,7 +9,9 @@ import { colors } from './src/theme';
 import { useAOIs, useProfile, resetEventCache } from './src/hooks/useEvents';
 import BrandedLoader from './src/components/BrandedLoader';
 import { onEventUpdate } from './src/lib/realtime';
-import { addNotificationResponseListener, initNotifications, notifyRealtimeUpdate } from './src/lib/notifications';
+import { addNotificationResponseListener, consumeLastNotificationResponse, getExpoPushToken, initNotifications, notifyRealtimeUpdate } from './src/lib/notifications';
+import { syncPushToken } from './src/lib/pushRegistration';
+import { markAlertViewed } from './src/lib/viewedAlerts';
 
 // App context for onboarding completion
 export const AppContext = createContext();
@@ -54,6 +56,34 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       setOnboardingComplete(false);
     }
   }, [isSignedIn, setOnboardingComplete]);
+
+  const handleNotificationOpen = React.useCallback(async (response) => {
+    const event = response?.notification?.request?.content?.data?.event;
+    if (!event || !navigationRef.isReady()) {
+      console.log('[App] Notification tap ignored', {
+        hasEvent: !!event,
+        navReady: navigationRef.isReady(),
+      });
+      return;
+    }
+
+    await markAlertViewed(event).catch((err) => {
+      console.warn('[App] Failed to mark alert viewed from notification:', err.message);
+    });
+
+    console.log('[App] Navigating from notification tap', {
+      eventId: event.id || event.event_id || null,
+      title: event.title || null,
+    });
+    navigationRef.navigate('AlertsTab', {
+      screen: 'AlertsList',
+      params: {
+        activeTab: 'MY',
+        viewedEventId: event.id || event.event_id || null,
+        notificationOpenedAt: Date.now(),
+      },
+    });
+  }, []);
 
   useEffect(() => {
     if (!isSignedIn) {
@@ -122,6 +152,31 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
     initNotifications().catch((err) => {
       console.warn('[LEONA Notifications] Init failed:', err.message);
     });
+    getExpoPushToken()
+      .then((token) => {
+        if (!token) {
+          return null;
+        }
+        return syncPushToken(token);
+      })
+      .then((result) => {
+        if (result) {
+          console.log('[App] Push token sync result', result);
+        }
+      })
+      .catch((err) => {
+        console.warn('[App] Push token sync failed:', err.message);
+      });
+    consumeLastNotificationResponse()
+      .then((response) => {
+        if (response) {
+          return handleNotificationOpen(response);
+        }
+        return null;
+      })
+      .catch((err) => {
+        console.warn('[App] Last notification response check failed:', err.message);
+      });
 
     const unsubRealtime = onEventUpdate((update) => {
       console.log('[App] Realtime event received for notification', {
@@ -138,22 +193,8 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       console.log('[App] Notification response received', {
         data: response?.notification?.request?.content?.data || null,
       });
-      const event = response?.notification?.request?.content?.data?.event;
-      if (!event || !navigationRef.isReady()) {
-        console.log('[App] Notification tap ignored', {
-          hasEvent: !!event,
-          navReady: navigationRef.isReady(),
-        });
-        return;
-      }
-
-      console.log('[App] Navigating from notification tap', {
-        eventId: event.id || event.event_id || null,
-        title: event.title || null,
-      });
-      navigationRef.navigate('AlertsTab', {
-        screen: 'EventDetail',
-        params: { event },
+      handleNotificationOpen(response).catch((err) => {
+        console.warn('[App] Notification open handling failed:', err.message);
       });
     });
 
@@ -161,7 +202,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       unsubRealtime?.();
       unsubNotifications?.();
     };
-  }, [isSignedIn]);
+  }, [handleNotificationOpen, isSignedIn]);
 
   if (!isLoaded || (isSignedIn && authReady && (aoisLoading || profileLoading))) {
     return <BrandedLoader />;
