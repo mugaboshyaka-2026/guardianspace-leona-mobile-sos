@@ -270,12 +270,18 @@ export function useDataSources() {
 /**
  * useProfile — returns user profile data.
  */
-export function useProfile() {
+export function useProfile(enabled = true) {
   const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
+    if (!enabled) {
+      setProfile(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -288,7 +294,7 @@ export function useProfile() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

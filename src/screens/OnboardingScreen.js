@@ -17,7 +17,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { useAuth, useSignIn, useSignUp } from '@clerk/clerk-expo';
 import { colors, spacing } from '../theme';
 import { AppContext } from '../../App';
-import { addAOI, fetchMyAOIs } from '../lib/api';
+import { addAOI, fetchMyAOIs, updateUserProfile } from '../lib/api';
 import { resetEventCache } from '../hooks/useEvents';
 import { getLocationCoordinates, getLocationMetadata } from '../lib/locality';
 import { PRODUCT_CONFIGS } from '../lib/products';
@@ -533,9 +533,9 @@ export default function OnboardingScreen() {
       const existingAoiSet = new Set(existingAois.map((item) => item.toLowerCase()));
       const aoisToCreate = normalizedAois.filter((item) => !existingAoiSet.has(item.toLowerCase()));
 
-      if (aoisToCreate.length > 0) {
-        setSubmittingSetup(true);
-        try {
+      setSubmittingSetup(true);
+      try {
+        if (aoisToCreate.length > 0) {
           console.log('[AOI_SETUP] Starting AOI setup', {
             selectedRadius,
             aoisToCreate,
@@ -548,17 +548,28 @@ export default function OnboardingScreen() {
           console.log('[AOI_SETUP] AOI setup completed', {
             aoisCreated: aoisToCreate,
           });
-        } catch (error) {
-          console.error('[AOI_SETUP] AOI setup aborted', {
-            message: error?.message || 'Unknown error',
-            status: error?.status || null,
-          });
-          Alert.alert('AOI setup failed', error?.message || 'Unable to save your areas of interest.');
-          setSubmittingSetup(false);
-          return;
-        } finally {
-          setSubmittingSetup(false);
         }
+        await updateUserProfile({
+          preferences: {
+            event_types: selectedEventTypes,
+            radius_km: selectedRadius,
+          },
+        });
+        console.log('[AOI_SETUP] Preferences persisted', {
+          eventTypes: selectedEventTypes,
+          radiusKm: selectedRadius,
+          aois: normalizedAois,
+        });
+      } catch (error) {
+        console.error('[AOI_SETUP] AOI setup aborted', {
+          message: error?.message || 'Unknown error',
+          status: error?.status || null,
+        });
+        Alert.alert('AOI setup failed', error?.message || 'Unable to save your areas of interest.');
+        setSubmittingSetup(false);
+        return;
+      } finally {
+        setSubmittingSetup(false);
       }
     }
 

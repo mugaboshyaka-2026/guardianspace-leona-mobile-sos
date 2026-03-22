@@ -116,6 +116,19 @@ const AlertsScreen = ({ navigation }) => {
     return groups.filter((g) => g.data.length > 0);
   }, [orderedEvents]);
 
+  useEffect(() => {
+    console.log('[Alerts] filter state', {
+      activeTab,
+      configuredEventTypes: userConfig?.eventTypes || [],
+      configuredRadius: userConfig?.radius || null,
+      configuredAois: userConfig?.aois || [],
+      sourceMyAlertsCount: myAlerts.length,
+      sourceWorldEventsCount: worldEvents.length,
+      filteredMyAlertsCount: filteredMyAlerts.length,
+      globalEventsCount: globalEvents.length,
+    });
+  }, [activeTab, filteredMyAlerts.length, globalEvents.length, myAlerts.length, userConfig, worldEvents.length]);
+
   const handleAlertPress = (event) => {
     navigation.navigate('EventDetail', { event });
   };

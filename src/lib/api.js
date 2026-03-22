@@ -312,3 +312,7 @@ export async function tavusLlmProxy(body = {}) {
 export async function fetchUserProfile() {
   return await request('/api/users/me');
 }
+
+export async function updateUserProfile(patch) {
+  return await request('/api/users/me', { method: 'PATCH', body: patch });
+}

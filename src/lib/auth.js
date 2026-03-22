@@ -5,6 +5,7 @@ import { initRealtime, disconnectRealtime } from './realtime';
 const AuthContext = createContext({
   isSignedIn: false,
   isLoaded: true,
+  authReady: false,
   user: null,
   signIn: async () => {},
   signUp: async () => {},
@@ -73,6 +74,7 @@ function MockAuthProvider({ children }) {
       value={{
         isSignedIn: !!user,
         isLoaded: true,
+        authReady: !!user,
         user,
         signIn,
         signUp,
@@ -122,15 +124,19 @@ function ClerkAuthBridge({ children }) {
   const { user } = useClerkUser();
   const { signIn, setActive: setActiveSignIn, isLoaded: signInLoaded } = useSignIn();
   const { signUp, setActive: setActiveSignUp, isLoaded: signUpLoaded } = useSignUp();
+  const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
     if (isSignedIn && getToken) {
       setAuthToken(getToken);
+      setAuthReady(true);
+      console.log('[Auth] token bridge ready');
       initRealtime().catch(() => {});
       return;
     }
 
     setAuthToken(null);
+    setAuthReady(false);
     disconnectRealtime();
   }, [isSignedIn, getToken]);
 
@@ -182,6 +188,7 @@ function ClerkAuthBridge({ children }) {
       value={{
         isSignedIn: !!isSignedIn,
         isLoaded: !!isLoaded,
+        authReady,
         user: user || null,
         signIn: performSignIn,
         signUp: performSignUp,
