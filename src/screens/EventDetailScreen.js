@@ -11,7 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { colors, sevColors, typeIcons, spacing, fonts, sevBg } from '../theme';
-import { getRelatedNews } from '../lib/api';
+import { getRelatedNews, addFavorite, removeFavorite, checkFavorite } from '../lib/api';
 
 const mapsModule = Platform.OS === 'web' ? null : require('react-native-maps');
 const MapView = mapsModule?.default;
@@ -22,13 +22,39 @@ const { width } = Dimensions.get('window');
 const EventDetailScreen = ({ route, navigation }) => {
   const { event } = route.params || {};
   const [activeTab, setActiveTab] = useState('DETAILS');
+  const [isFavorite, setIsFavorite] = useState(false);
+
+  // Check if event is favorited
+  useEffect(() => {
+    if (event?.id) {
+      checkFavorite(event.id)
+        .then((data) => setIsFavorite(data?.is_favorite || false))
+        .catch(() => {});
+    }
+  }, [event?.id]);
+
+  const toggleFavorite = async () => {
+    try {
+      if (isFavorite) {
+        await removeFavorite(event.id);
+        setIsFavorite(false);
+      } else {
+        await addFavorite(event.id, event);
+        setIsFavorite(true);
+      }
+    } catch (err) {
+      console.warn('[EventDetail] Favorite toggle failed:', err.message);
+      // Optimistic toggle even on failure
+      setIsFavorite(!isFavorite);
+    }
+  };
   const [is3D, setIs3D] = useState(true);
   const [relatedNews, setRelatedNews] = useState([]);
   const [newsLoading, setNewsLoading] = useState(false);
 
-  // Fetch related news when MEDIA tab is selected
+  // Fetch related news when FEED tab is selected
   useEffect(() => {
-    if (activeTab === 'MEDIA' && event?.id && relatedNews.length === 0) {
+    if (activeTab === 'FEED' && event?.id && relatedNews.length === 0) {
       setNewsLoading(true);
       getRelatedNews(event.id)
         .then((data) => setRelatedNews(data?.articles || []))
@@ -45,7 +71,7 @@ const EventDetailScreen = ({ route, navigation }) => {
     );
   }
 
-  const tabs = ['DETAILS', 'IMAGERY', 'MEDIA', 'ECOSYSTEM'];
+  const tabs = ['DETAILS', 'IMAGERY', 'FEED', 'ECOSYSTEM'];
   const eventLat = event.lat || -33.8688;
   const eventLng = event.lng || 151.2093;
 
@@ -187,20 +213,25 @@ const EventDetailScreen = ({ route, navigation }) => {
           </Text>
         </View>
         <View style={styles.heroContent}>
-          <View style={styles.heroTitleRow}>
-            <Text style={styles.heroTitle}>{event.title}</Text>
-            <View
-              style={[
-                styles.severityBadge,
-                { backgroundColor: sevColors[event.severity] },
-              ]}
-            >
-              <Text style={styles.severityBadgeText}>
-                {event.severity.toUpperCase()}
-              </Text>
-            </View>
-          </View>
+          <Text style={styles.heroTitle}>{event.title}</Text>
           <Text style={styles.heroLocation}>{event.location}</Text>
+        </View>
+        <View style={styles.heroRight}>
+          <View
+            style={[
+              styles.severityBadge,
+              { backgroundColor: sevColors[event.severity] },
+            ]}
+          >
+            <Text style={styles.severityBadgeText}>
+              {event.severity.toUpperCase()}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={toggleFavorite} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Text style={isFavorite ? styles.favStarActive : styles.favStarInactive}>
+              {isFavorite ? '★' : '☆'}
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -255,6 +286,45 @@ const EventDetailScreen = ({ route, navigation }) => {
                 )}
               </View>
 
+              {/* Event Metadata */}
+              <View style={styles.metadataSection}>
+                <Text style={styles.sectionLabel}>EVENT INFO</Text>
+                <View style={styles.metaGrid}>
+                  <View style={styles.metaRow}>
+                    <Text style={styles.metaLabel}>Start Time</Text>
+                    <Text style={styles.metaValue}>
+                      {event.created_at || event.event_time
+                        ? new Date(event.created_at || event.event_time).toLocaleString()
+                        : 'Unknown'}
+                    </Text>
+                  </View>
+                  <View style={styles.metaRow}>
+                    <Text style={styles.metaLabel}>Last Observed</Text>
+                    <Text style={styles.metaValue}>
+                      {event.updated_at
+                        ? new Date(event.updated_at).toLocaleString()
+                        : event.expires_at
+                        ? 'Expires: ' + new Date(event.expires_at).toLocaleDateString()
+                        : 'Active'}
+                    </Text>
+                  </View>
+                  <View style={styles.metaRow}>
+                    <Text style={styles.metaLabel}>Coordinates</Text>
+                    <Text style={styles.metaValueMono}>
+                      {eventLat.toFixed(4)}° {eventLat >= 0 ? 'N' : 'S'}, {eventLng.toFixed(4)}° {eventLng >= 0 ? 'E' : 'W'}
+                    </Text>
+                  </View>
+                  <View style={styles.metaRow}>
+                    <Text style={styles.metaLabel}>Location</Text>
+                    <Text style={styles.metaValue}>{event.location || event.location_name || 'Unknown'}</Text>
+                  </View>
+                  <View style={styles.metaRow}>
+                    <Text style={styles.metaLabel}>Country</Text>
+                    <Text style={styles.metaValue}>{event.country_code || event.country || '—'}</Text>
+                  </View>
+                </View>
+              </View>
+
               {/* Description */}
               <View style={styles.descriptionSection}>
                 <Text style={styles.sectionLabel}>DESCRIPTION</Text>
@@ -272,7 +342,7 @@ const EventDetailScreen = ({ route, navigation }) => {
               </View>
             )}
 
-            {activeTab === 'MEDIA' && (
+            {activeTab === 'FEED' && (
               <View style={styles.mediaTab}>
                 {newsLoading ? (
                   <ActivityIndicator color={colors.blue} style={{ paddingVertical: 40 }} />
@@ -302,12 +372,27 @@ const EventDetailScreen = ({ route, navigation }) => {
             )}
           </View>
 
-          {/* LEONA Assessment Card */}
+          {/* LEONA Initial Assessment Card */}
           <View style={styles.leonaCard}>
             <View style={styles.leonaHeader}>
-              <Text style={styles.leonaLabel}>◆ LEONA ASSESSMENT</Text>
+              <Text style={styles.leonaLabel}>◆ LEONA INITIAL ASSESSMENT</Text>
             </View>
             <View style={styles.leonaContent}>
+              {/* Paragraph summary */}
+              <Text style={styles.assessmentSummary}>
+                This event has been classified as{' '}
+                <Text style={{ color: sevColors[event.severity], fontWeight: '700' }}>
+                  {event.severity.toUpperCase()}
+                </Text>
+                . {event.description || 'LEONA is actively coordinating intelligence across all relevant domain agents and the local Country Agent.'}{' '}
+                {event.severity === 'critical'
+                  ? 'Recommend immediate action and response coordination.'
+                  : event.severity === 'high'
+                  ? 'Alert and preparation measures are advised for affected areas.'
+                  : 'Continued monitoring is recommended.'}
+              </Text>
+
+              {/* Key metrics */}
               <View style={styles.assessmentRow}>
                 <Text style={styles.assessmentLabel}>Risk Level</Text>
                 <Text style={[styles.assessmentValue, { color: sevColors[event.severity] }]}>
@@ -328,10 +413,58 @@ const EventDetailScreen = ({ route, navigation }) => {
                 <Text style={styles.assessmentLabel}>Confidence</Text>
                 <Text style={styles.assessmentValue}>87%</Text>
               </View>
+              <View style={styles.assessmentRow}>
+                <Text style={styles.assessmentLabel}>Agents Active</Text>
+                <Text style={[styles.assessmentValue, { color: colors.blue }]}>
+                  {event.type ? event.type.charAt(0).toUpperCase() + event.type.slice(1) + ' Specialist' : 'LEONA'}
+                </Text>
+              </View>
             </View>
-            <TouchableOpacity style={styles.leonaButton}>
-              <Text style={styles.leonaButtonText}>VIEW FULL ASSESSMENT →</Text>
+            <TouchableOpacity
+              style={styles.leonaButton}
+              onPress={() => navigation.navigate('LeonaChat')}
+            >
+              <Text style={styles.leonaButtonText}>CHAT WITH AGENT →</Text>
             </TouchableOpacity>
+          </View>
+
+          {/* Event Timeline */}
+          <View style={styles.timelineSection}>
+            <Text style={styles.timelineTitle}>EVENT TIMELINE</Text>
+
+            <View style={styles.timelineEntry}>
+              <View style={styles.timelineLineWrap}>
+                <View style={[styles.timelineDot, { backgroundColor: sevColors[event.severity] || '#FF7A00' }]} />
+                <View style={styles.timelineLine} />
+              </View>
+              <View style={styles.timelineContent}>
+                <Text style={[styles.timelineTime, { color: sevColors[event.severity] || '#FF7A00' }]}>
+                  {event.created_at ? new Date(event.created_at).toLocaleString() : '2h ago'}
+                </Text>
+                <Text style={styles.timelineDesc}>Event confirmed and catalogued by LEONA Intelligence. Risk assessment generated.</Text>
+              </View>
+            </View>
+
+            <View style={styles.timelineEntry}>
+              <View style={styles.timelineLineWrap}>
+                <View style={[styles.timelineDot, { backgroundColor: '#FF7A00' }]} />
+                <View style={styles.timelineLine} />
+              </View>
+              <View style={styles.timelineContent}>
+                <Text style={[styles.timelineTime, { color: '#FF7A00' }]}>Earlier</Text>
+                <Text style={styles.timelineDesc}>First data signals detected across monitored feed network. LEONA began cross-referencing sources.</Text>
+              </View>
+            </View>
+
+            <View style={styles.timelineEntry}>
+              <View style={styles.timelineLineWrap}>
+                <View style={[styles.timelineDot, { backgroundColor: colors.textDim }]} />
+              </View>
+              <View style={styles.timelineContent}>
+                <Text style={[styles.timelineTime, { color: colors.textDim }]}>Background</Text>
+                <Text style={styles.timelineDesc}>Background monitoring active. No escalation at that time.</Text>
+              </View>
+            </View>
           </View>
 
           <View style={styles.bottomSpacer} />
@@ -439,6 +572,22 @@ const styles = StyleSheet.create({
     color: colors.textSec,
     fontSize: 12,
   },
+  heroRight: {
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: 6,
+    flexShrink: 0,
+  },
+  favStarActive: {
+    fontSize: 22,
+    color: '#FFD700',
+    textShadowColor: 'rgba(255,215,0,0.4)',
+    textShadowRadius: 6,
+  },
+  favStarInactive: {
+    fontSize: 22,
+    color: '#333',
+  },
   tabBar: {
     flexDirection: 'row',
     borderBottomColor: colors.border,
@@ -498,6 +647,50 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.5,
   },
+  // Event metadata
+  metadataSection: {
+    gap: spacing.md,
+  },
+  metaGrid: {
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  metaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+  },
+  metaLabel: {
+    color: colors.textDim,
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  metaValue: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'right',
+    flex: 1,
+    marginLeft: spacing.md,
+  },
+  metaValueMono: {
+    color: colors.blue,
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: 'monospace',
+    textAlign: 'right',
+    flex: 1,
+    marginLeft: spacing.md,
+  },
+
   descriptionSection: {
     gap: spacing.md,
   },
@@ -574,6 +767,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.lg,
     gap: spacing.md,
   },
+  assessmentSummary: {
+    color: colors.textSec,
+    fontSize: 13,
+    lineHeight: 20,
+    marginBottom: spacing.sm,
+  },
   assessmentRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -603,6 +802,54 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.5,
   },
+  // Event Timeline
+  timelineSection: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  timelineTitle: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: spacing.md,
+  },
+  timelineEntry: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginBottom: spacing.md,
+    alignItems: 'flex-start',
+  },
+  timelineLineWrap: {
+    alignItems: 'center',
+    width: 12,
+  },
+  timelineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  timelineLine: {
+    width: 2,
+    flex: 1,
+    minHeight: 20,
+    backgroundColor: colors.border,
+    marginTop: 3,
+  },
+  timelineContent: {
+    flex: 1,
+  },
+  timelineTime: {
+    fontSize: 10,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  timelineDesc: {
+    fontSize: 11,
+    color: colors.textSec,
+    lineHeight: 16,
+  },
+
   bottomSpacer: {
     height: spacing.xl,
   },
