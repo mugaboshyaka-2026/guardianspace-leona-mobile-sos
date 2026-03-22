@@ -8,6 +8,18 @@ let _client = null;
 let _channel = null;
 let _listeners = [];
 
+function normalizeAblyAuthPayload(payload) {
+  if (!payload) return null;
+  if (typeof payload === 'string') return payload;
+  if (payload.token || payload.tokenRequest || payload.capability || payload.expires || payload.issued) {
+    return payload;
+  }
+  if (payload.tokenDetails) return payload.tokenDetails;
+  if (payload.tokenRequestData) return payload.tokenRequestData;
+  if (payload.data) return normalizeAblyAuthPayload(payload.data);
+  return null;
+}
+
 /**
  * Initialize Ably connection using token auth via our API.
  * Call once after user is authenticated.
@@ -22,7 +34,12 @@ export async function initRealtime() {
       authCallback: async (tokenParams, callback) => {
         try {
           const tokenData = await getAblyToken();
-          callback(null, tokenData);
+          const authPayload = normalizeAblyAuthPayload(tokenData);
+          if (!authPayload) {
+            callback(new Error('Unexpected Ably auth payload shape'), null);
+            return;
+          }
+          callback(null, authPayload);
         } catch (err) {
           callback(err, null);
         }

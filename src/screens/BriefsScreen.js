@@ -91,7 +91,16 @@ const BriefsScreen = ({ navigation }) => {
   ];
 
   const handleChatPress = () => {
-    navigation.navigate('LeonaChat');
+    navigation.navigate('LeonaTab', {
+      screen: 'LeonaChat',
+      params: {
+        initialSection: 'CHAT',
+        requestKey: `brief-chat-${activeTab}-${Date.now()}`,
+        initialPrompt: activeTab === 'MY'
+          ? `Give me a concise briefing for my areas of interest: ${userAois.join(', ') || 'my configured AOIs'}. Current matched events: ${myEvents.length}.`
+          : `Give me a concise global risk briefing. Current global event count: ${events.length}. Critical: ${severityCounts.critical}, High: ${severityCounts.high}, Elevated: ${severityCounts.elevated}, Monitoring: ${severityCounts.monitoring}.`,
+      },
+    });
   };
 
   const renderSeverityChip = (severity, count) => {
