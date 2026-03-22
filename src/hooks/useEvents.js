@@ -313,9 +313,27 @@ export function useLeonaChat() {
     messagesRef.current = messages;
   }, [messages]);
 
-  const send = useCallback(async (userText) => {
+  const send = useCallback(async (userText, options = {}) => {
+    const pendingId = `pending-${Date.now()}`;
+    const startedAt = Date.now();
+    console.log('[useLeonaChat] send:start', {
+      requestKind: options.requestKind || 'generic',
+      hasPendingText: !!options.pendingText,
+      promptLength: userText.length,
+    });
     const userMsg = { id: Date.now().toString(), type: 'user', text: userText };
     setMessages((prev) => [...prev, userMsg]);
+    if (options.pendingText) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: pendingId,
+          type: 'agent',
+          text: options.pendingText,
+          pending: true,
+        },
+      ]);
+    }
     setSending(true);
 
     try {
@@ -330,18 +348,37 @@ export function useLeonaChat() {
 
       const data = await sendLeonaMessage(apiMessages);
       const reply = data.message || data.reply || data.content || 'Processing your request...';
+      console.log('[useLeonaChat] send:success', {
+        requestKind: options.requestKind || 'generic',
+        elapsedMs: Date.now() - startedAt,
+        replyLength: reply.length,
+      });
       const agentMsg = { id: (Date.now() + 1).toString(), type: 'agent', text: reply };
-      setMessages((prev) => [...prev, agentMsg]);
+      setMessages((prev) => {
+        const withoutPending = prev.filter((msg) => msg.id !== pendingId);
+        return [...withoutPending, agentMsg];
+      });
     } catch (err) {
-      console.warn('[useLeonaChat] API failed:', err.message);
+      console.warn('[useLeonaChat] send:failed', {
+        requestKind: options.requestKind || 'generic',
+        elapsedMs: Date.now() - startedAt,
+        error: err.message,
+      });
       // Fallback response
       const agentMsg = {
         id: (Date.now() + 1).toString(),
         type: 'agent',
-        text: 'I\'m having trouble connecting to the server. Please try again shortly.',
+        text: options.failureText || 'I\'m having trouble connecting to the server. Please try again shortly.',
       };
-      setMessages((prev) => [...prev, agentMsg]);
+      setMessages((prev) => {
+        const withoutPending = prev.filter((msg) => msg.id !== pendingId);
+        return [...withoutPending, agentMsg];
+      });
     } finally {
+      console.log('[useLeonaChat] send:complete', {
+        requestKind: options.requestKind || 'generic',
+        elapsedMs: Date.now() - startedAt,
+      });
       setSending(false);
     }
   }, []);

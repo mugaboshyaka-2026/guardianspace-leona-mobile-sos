@@ -18,6 +18,29 @@ const MapView = mapsModule?.default;
 const Marker = mapsModule?.Marker;
 
 const { width } = Dimensions.get('window');
+const severityRank = { critical: 4, high: 3, elevated: 2, monitoring: 1 };
+
+function formatDisplayDate(value, fallback = 'Live now') {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return date.toLocaleString();
+}
+
+function toArray(value) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (typeof value === 'string' && value.trim()) {
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function toTitle(value) {
+  if (!value) return 'Unknown';
+  return String(value)
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
 
 const EventDetailScreen = ({ route, navigation }) => {
   const { event } = route.params || {};
@@ -51,17 +74,24 @@ const EventDetailScreen = ({ route, navigation }) => {
   const [is3D, setIs3D] = useState(true);
   const [relatedNews, setRelatedNews] = useState([]);
   const [newsLoading, setNewsLoading] = useState(false);
+  const [newsFailed, setNewsFailed] = useState(false);
 
   // Fetch related news when FEED tab is selected
   useEffect(() => {
-    if (activeTab === 'FEED' && event?.id && relatedNews.length === 0) {
+    if (activeTab === 'FEED' && event?.id && relatedNews.length === 0 && !newsFailed) {
       setNewsLoading(true);
       getRelatedNews(event.id)
-        .then((data) => setRelatedNews(data?.articles || []))
-        .catch((err) => console.warn('[EventDetail] Related news failed:', err.message))
+        .then((data) => {
+          setRelatedNews(data?.articles || []);
+          setNewsFailed(false);
+        })
+        .catch((err) => {
+          setNewsFailed(true);
+          console.warn('[EventDetail] Related news failed:', err.message);
+        })
         .finally(() => setNewsLoading(false));
     }
-  }, [activeTab, event?.id]);
+  }, [activeTab, event?.id, newsFailed, relatedNews.length]);
 
   if (!event) {
     return (
@@ -74,6 +104,111 @@ const EventDetailScreen = ({ route, navigation }) => {
   const tabs = ['DETAILS', 'IMAGERY', 'FEED', 'ECOSYSTEM'];
   const eventLat = event.lat || -33.8688;
   const eventLng = event.lng || 151.2093;
+  const impactSignals = [
+    { label: 'Population exposure', value: event.population || event.affected || 'Assessing', tone: event.population || event.affected ? 'high' : event.severity },
+    { label: 'Infrastructure stress', value: event.area || event.wind || event.surge || 'Monitoring network strain', tone: event.severity },
+    { label: 'Displacement risk', value: event.displaced || (event.severity === 'critical' ? 'Elevated' : 'Limited'), tone: event.displaced ? 'critical' : event.severity },
+    { label: 'Response posture', value: event.containment || (event.severity === 'critical' ? 'Full mobilization' : event.severity === 'high' ? 'Staging' : 'Watch mode'), tone: event.severity },
+  ];
+  const imageryLayers = [
+    {
+      label: 'Satellite',
+      detail: event.type === 'wildfire'
+        ? 'Thermal hotspots and burn perimeter prioritised'
+        : event.type === 'flood'
+        ? 'Surface water expansion and inundation edges tracked'
+        : event.type === 'hurricane'
+        ? 'Cloud bands and landfall corridor monitored'
+        : 'Overhead scene review synced to event coordinates',
+    },
+    {
+      label: 'Terrain',
+      detail: event.area || event.location
+        ? `${event.area || 'Local terrain'} near ${event.location || 'impact area'}`
+        : 'Terrain context aligned to the affected zone',
+    },
+    {
+      label: 'Exposure Grid',
+      detail: event.population || event.affected
+        ? `${event.population || event.affected} potentially exposed`
+        : 'Population and asset exposure still being estimated',
+    },
+  ];
+  const sceneNotes = [
+    event.description || 'Primary scene assessment remains in progress.',
+    event.wind ? `Wind conditions reported at ${event.wind}.` : null,
+    event.aftershocks ? `Secondary activity detected: ${event.aftershocks}.` : null,
+    event.surge ? `Water surge model indicates ${event.surge}.` : null,
+    event.landfall ? `Landfall risk posture: ${event.landfall}.` : null,
+  ].filter(Boolean);
+  const eventFeedItems = [
+    {
+      id: 'confirm',
+      title: 'Event confirmed by LEONA',
+      timestamp: formatDisplayDate(event.updated_at || event.created_at),
+      detail: `${toTitle(event.type)} activity classified as ${event.severity}.`,
+      tone: event.severity,
+    },
+    {
+      id: 'correlate',
+      title: 'Cross-source correlation complete',
+      timestamp: formatDisplayDate(event.created_at, 'Initial detection'),
+      detail: event.source
+        ? `Primary source: ${event.source}. Additional feed correlation active.`
+        : 'Operational feeds and local signals have been cross-referenced.',
+      tone: 'high',
+    },
+    {
+      id: 'impact',
+      title: 'Impact model refreshed',
+      timestamp: event.expires_at ? `Valid until ${formatDisplayDate(event.expires_at)}` : 'Rolling updates',
+      detail: event.population || event.affected || event.displaced
+        ? `Exposure indicators: ${[event.population, event.affected, event.displaced].filter(Boolean).join(' · ')}`
+        : 'Exposure indicators are still being computed from incoming telemetry.',
+      tone: 'monitoring',
+    },
+  ];
+  const relatedCoverage = relatedNews.map((article, idx) => ({
+    id: `news-${article.id || idx}`,
+    title: article.title || 'Related coverage',
+    sourceLine: [article.source, article.location].filter(Boolean).join(' · ') || 'External source',
+    summary: article.summary || article.snippet || article.description || 'Open the source feed for the full article context.',
+    time: article.published_at || article.publishedAt || article.date || null,
+  }));
+  const ecosystemCards = [
+    {
+      label: 'Population',
+      value: event.population || event.affected || 'Unknown',
+      note: event.displaced ? `${event.displaced} displaced or at risk` : 'No displacement figure confirmed yet',
+      tone: event.population || event.affected ? 'high' : 'monitoring',
+    },
+    {
+      label: 'Critical Infrastructure',
+      value: event.area || event.category || toTitle(event.type),
+      note: event.wind || event.surge || event.containment || 'Infrastructure pressure inferred from event profile',
+      tone: event.severity,
+    },
+    {
+      label: 'Environmental Load',
+      value: event.magnitude || event.aftershocks || event.landfall || 'Monitoring',
+      note: event.description || 'Environmental impact model is using baseline telemetry.',
+      tone: event.severity,
+    },
+    {
+      label: 'Operational Access',
+      value: event.location || 'Area under review',
+      note: event.country_code || event.country || 'Jurisdiction not specified',
+      tone: severityRank[event.severity] >= 3 ? 'high' : 'monitoring',
+    },
+  ];
+  const operationalActions = [
+    event.severity === 'critical' ? 'Mobilize response leads and confirm escalation chain.' : null,
+    event.severity === 'high' ? 'Stage response resources and validate fallback comms.' : null,
+    event.population || event.affected ? 'Verify exposed population estimate against field reports.' : 'Continue validating exposure estimate.',
+    event.wind || event.surge || event.landfall ? 'Review weather and mobility constraints before field deployment.' : 'Review road, weather, and access constraints.',
+    'Push the latest incident summary to LEONA chat for coordinated next actions.',
+  ].filter(Boolean);
+  const sourceTags = toArray(event.source || event.sources);
 
   const renderStatItem = (label, value) => (
     <View style={styles.statItem}>
@@ -185,6 +320,165 @@ const EventDetailScreen = ({ route, navigation }) => {
         <View style={[styles.mapSevBadge, { backgroundColor: sevColors[event.severity] }]}>
           <Text style={styles.mapSevBadgeText}>{event.severity.toUpperCase()}</Text>
         </View>
+      </View>
+    </View>
+  );
+
+  const renderImageryTab = () => (
+    <View style={styles.richTab}>
+      {renderInlineMap()}
+
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionLabel}>OBSERVATION LAYERS</Text>
+        <Text style={styles.sectionMetaText}>Derived from current event telemetry</Text>
+      </View>
+
+      <View style={styles.layerGrid}>
+        {imageryLayers.map((layer) => (
+          <View key={layer.label} style={styles.layerCard}>
+            <Text style={styles.layerTitle}>{layer.label}</Text>
+            <Text style={styles.layerDetail}>{layer.detail}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.dualRow}>
+        <View style={styles.snapshotCard}>
+          <Text style={styles.snapshotLabel}>CURRENT VIEW</Text>
+          <Text style={styles.snapshotValue}>{is3D ? '3D tactical' : '2D satellite'}</Text>
+          <Text style={styles.snapshotHint}>Focus locked to {event.location || 'event coordinates'}</Text>
+        </View>
+        <View style={styles.snapshotCard}>
+          <Text style={styles.snapshotLabel}>LAST REFRESH</Text>
+          <Text style={styles.snapshotValue}>{formatDisplayDate(event.updated_at || event.created_at)}</Text>
+          <Text style={styles.snapshotHint}>Severity overlay synced to LEONA classification</Text>
+        </View>
+      </View>
+
+      <View style={styles.narrativePanel}>
+        <Text style={styles.sectionLabel}>SCENE NOTES</Text>
+        {sceneNotes.map((note, idx) => (
+          <View key={`${note}-${idx}`} style={styles.signalRow}>
+            <View style={[styles.signalDot, { backgroundColor: sevColors[event.severity] || colors.blue }]} />
+            <Text style={styles.signalText}>{note}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+
+  const renderFeedTab = () => (
+    <View style={styles.richTab}>
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionLabel}>LIVE SIGNALS</Text>
+        <Text style={styles.sectionMetaText}>{newsLoading ? 'Refreshing' : 'Operational feed'}</Text>
+      </View>
+
+      <View style={styles.feedPanel}>
+        {eventFeedItems.map((item, idx) => (
+          <View key={item.id} style={styles.feedTimelineRow}>
+            <View style={styles.feedTimelineRail}>
+              <View style={[styles.feedTimelineDot, { backgroundColor: sevColors[item.tone] || colors.blue }]} />
+              {idx < eventFeedItems.length - 1 && <View style={styles.feedTimelineLine} />}
+            </View>
+            <View style={styles.feedTimelineBody}>
+              <Text style={styles.feedItemTitle}>{item.title}</Text>
+              <Text style={styles.feedItemTime}>{item.timestamp}</Text>
+              <Text style={styles.feedItemDetail}>{item.detail}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionLabel}>RELATED COVERAGE</Text>
+        <Text style={styles.sectionMetaText}>{relatedCoverage.length} items</Text>
+      </View>
+
+      {newsLoading ? (
+        <ActivityIndicator color={colors.blue} style={{ paddingVertical: 40 }} />
+      ) : relatedCoverage.length > 0 ? (
+        relatedCoverage.map((article) => (
+          <View key={article.id} style={styles.coverageCard}>
+            <Text style={styles.coverageTitle}>{article.title}</Text>
+            <Text style={styles.coverageMeta}>
+              {article.sourceLine}
+              {article.time ? ` · ${formatDisplayDate(article.time, '')}` : ''}
+            </Text>
+            <Text style={styles.coverageSummary}>{article.summary}</Text>
+          </View>
+        ))
+      ) : (
+        <View style={styles.emptyStateCard}>
+          <Text style={styles.emptyStateTitle}>No external coverage yet</Text>
+          <Text style={styles.placeholderText}>
+            LEONA is still tracking internal signals for this event. External article matching has not returned any linked coverage.
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+
+  const renderEcosystemTab = () => (
+    <View style={styles.richTab}>
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionLabel}>ECOSYSTEM OVERVIEW</Text>
+        <Text style={styles.sectionMetaText}>Operational dependencies and exposure</Text>
+      </View>
+
+      <View style={styles.ecosystemGrid}>
+        {ecosystemCards.map((card) => (
+          <View key={card.label} style={styles.ecosystemCard}>
+            <Text style={styles.ecosystemLabel}>{card.label}</Text>
+            <Text style={[styles.ecosystemValue, { color: sevColors[card.tone] || colors.blueLight }]}>{card.value}</Text>
+            <Text style={styles.ecosystemNote} numberOfLines={3}>{card.note}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.narrativePanel}>
+        <Text style={styles.sectionLabel}>IMPACT SIGNALS</Text>
+        {impactSignals.map((signal) => (
+          <View key={signal.label} style={styles.impactRow}>
+            <View>
+              <Text style={styles.impactLabel}>{signal.label}</Text>
+              <Text style={styles.impactValue}>{signal.value}</Text>
+            </View>
+            <View style={[styles.impactPill, { backgroundColor: sevBg[signal.tone] || colors.blueDim, borderColor: sevColors[signal.tone] || colors.blue }]}>
+              <Text style={[styles.impactPillText, { color: sevColors[signal.tone] || colors.blueLight }]}>{toTitle(signal.tone)}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.narrativePanel}>
+        <Text style={styles.sectionLabel}>OPERATING CONTEXT</Text>
+        <Text style={styles.ecosystemNarrative}>
+          {event.description || 'LEONA is maintaining a rolling ecosystem assessment for this incident.'}
+        </Text>
+        <View style={styles.tagRow}>
+          <View style={styles.contextTag}>
+            <Text style={styles.contextTagText}>{toTitle(event.type)}</Text>
+          </View>
+          <View style={styles.contextTag}>
+            <Text style={styles.contextTagText}>{toTitle(event.severity)}</Text>
+          </View>
+          {(sourceTags.length > 0 ? sourceTags : [event.country_code || event.country || 'Global']).slice(0, 3).map((tag) => (
+            <View key={tag} style={styles.contextTag}>
+              <Text style={styles.contextTagText}>{tag}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.narrativePanel}>
+        <Text style={styles.sectionLabel}>RECOMMENDED ACTIONS</Text>
+        {operationalActions.map((item, idx) => (
+          <View key={`${item}-${idx}`} style={styles.actionRow}>
+            <Text style={styles.actionIndex}>{idx + 1}</Text>
+            <Text style={styles.actionText}>{item}</Text>
+          </View>
+        ))}
       </View>
     </View>
   );
@@ -334,15 +628,11 @@ const EventDetailScreen = ({ route, navigation }) => {
             </View>
           )}
 
-            {activeTab === 'IMAGERY' && (
-              <View style={styles.placeholderTab}>
-                <Text style={styles.placeholderText}>
-                  Satellite and drone imagery not available in this demo
-                </Text>
-              </View>
-            )}
+            {activeTab === 'IMAGERY' && renderImageryTab()}
 
-            {activeTab === 'FEED' && (
+            {activeTab === 'FEED' && renderFeedTab()}
+
+            {false && activeTab === 'FEED' && (
               <View style={styles.mediaTab}>
                 {newsLoading ? (
                   <ActivityIndicator color={colors.blue} style={{ paddingVertical: 40 }} />
@@ -363,7 +653,9 @@ const EventDetailScreen = ({ route, navigation }) => {
               </View>
             )}
 
-            {activeTab === 'ECOSYSTEM' && (
+            {activeTab === 'ECOSYSTEM' && renderEcosystemTab()}
+
+            {false && activeTab === 'ECOSYSTEM' && (
               <View style={styles.placeholderTab}>
                 <Text style={styles.placeholderText}>
                   Ecosystem data for this event
@@ -422,7 +714,15 @@ const EventDetailScreen = ({ route, navigation }) => {
             </View>
             <TouchableOpacity
               style={styles.leonaButton}
-              onPress={() => navigation.navigate('LeonaChat')}
+              onPress={() => navigation.navigate('LeonaTab', {
+                screen: 'LeonaChat',
+                params: {
+                  initialSection: 'CHAT',
+                  requestKey: `event-${event.id || event.event_id || Date.now()}`,
+                  contextEvent: event,
+                  initialPrompt: `Analyze this event and give next actions.\nTitle: ${event.title || 'Untitled event'}\nLocation: ${event.location || 'unknown location'}\nSeverity: ${event.severity || 'unknown'}\nType: ${event.type || event.category || 'unknown'}\nDescription: ${event.description || 'No description provided.'}`,
+                },
+              })}
             >
               <Text style={styles.leonaButtonText}>CHAT WITH AGENT →</Text>
             </TouchableOpacity>
@@ -848,6 +1148,283 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textSec,
     lineHeight: 16,
+  },
+  richTab: {
+    gap: spacing.lg,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  sectionMetaText: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  layerGrid: {
+    gap: spacing.md,
+  },
+  layerCard: {
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  layerTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  layerDetail: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  dualRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  snapshotCard: {
+    flex: 1,
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  snapshotLabel: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  snapshotValue: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  snapshotHint: {
+    color: colors.textSec,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  narrativePanel: {
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  signalRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    alignItems: 'flex-start',
+  },
+  signalDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 5,
+  },
+  signalText: {
+    flex: 1,
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  feedPanel: {
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  feedTimelineRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  feedTimelineRail: {
+    width: 12,
+    alignItems: 'center',
+  },
+  feedTimelineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  feedTimelineLine: {
+    width: 2,
+    flex: 1,
+    minHeight: 26,
+    backgroundColor: colors.border,
+    marginTop: 4,
+  },
+  feedTimelineBody: {
+    flex: 1,
+    paddingBottom: spacing.sm,
+  },
+  feedItemTitle: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  feedItemTime: {
+    color: colors.blueLight,
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: spacing.xs,
+  },
+  feedItemDetail: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  coverageCard: {
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  coverageTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  coverageMeta: {
+    color: colors.textDim,
+    fontSize: 11,
+  },
+  coverageSummary: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  emptyStateCard: {
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.xl,
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  emptyStateTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  ecosystemGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+  },
+  ecosystemCard: {
+    width: (width - spacing.lg * 2 - spacing.md) / 2,
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  ecosystemLabel: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  ecosystemValue: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  ecosystemNote: {
+    color: colors.textSec,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  impactRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  impactLabel: {
+    color: colors.textSec,
+    fontSize: 11,
+    marginBottom: 2,
+  },
+  impactValue: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  impactPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  impactPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  ecosystemNarrative: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  tagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  contextTag: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  contextTagText: {
+    color: colors.blueLight,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    alignItems: 'flex-start',
+  },
+  actionIndex: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    textAlign: 'center',
+    overflow: 'hidden',
+    color: colors.black,
+    backgroundColor: colors.blue,
+    fontSize: 11,
+    fontWeight: '700',
+    paddingTop: 3,
+  },
+  actionText: {
+    flex: 1,
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
   },
 
   bottomSpacer: {

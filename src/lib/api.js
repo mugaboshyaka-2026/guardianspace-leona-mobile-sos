@@ -180,7 +180,11 @@ export async function fetchEvents(params = {}) {
 // ── LEONA AI ──
 
 export async function sendLeonaMessage(messages) {
-  const data = await request('/api/leona/chat', { method: 'POST', body: { messages } });
+  const data = await request('/api/leona/chat', {
+    method: 'POST',
+    body: { messages },
+    timeout: 90000,
+  });
   return data;
 }
 

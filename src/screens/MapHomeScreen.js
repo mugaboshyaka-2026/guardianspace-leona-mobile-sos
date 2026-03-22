@@ -90,21 +90,6 @@ const MapHomeScreen = ({ navigation }) => {
     [localEvents, userConfig?.location]
   );
 
-  const allEvents = useMemo(() => {
-    const deduped = new Map();
-    [...localEvents, ...globalEvents].forEach((event) => deduped.set(event.id, event));
-    return Array.from(deduped.values());
-  }, [globalEvents, localEvents]);
-
-  const filteredEvents = useMemo(() => {
-    if (activeTab === 'MY_ALERTS') return localEvents;
-    if (activeTab === 'EVENTS') return globalEvents;
-    if (activeTab === 'NEWS') return allEvents.slice(0, 5);
-    if (activeTab === 'COMMUNITY' && !productConfig.canUseCommunity) return [];
-    if (activeTab === 'COMMUNITY') return allEvents.slice(0, 3);
-    return allEvents;
-  }, [activeTab, allEvents, globalEvents, localEvents, productConfig.canUseCommunity]);
-
   const scopedEvents = useMemo(
     () => (mapScope === 'LOCAL' ? localEvents : globalEvents),
     [globalEvents, localEvents, mapScope]
@@ -114,6 +99,13 @@ const MapHomeScreen = ({ navigation }) => {
     () => scopedEvents.filter((event) => productConfig.enabledMapLayers.includes(event.type) && layerStates[event.type] !== false),
     [productConfig.enabledMapLayers, scopedEvents, layerStates]
   );
+
+  const filteredEvents = useMemo(() => {
+    if (activeTab === 'COMMUNITY' && !productConfig.canUseCommunity) return [];
+    if (activeTab === 'NEWS') return visibleEvents.slice(0, 5);
+    if (activeTab === 'COMMUNITY') return visibleEvents.slice(0, 3);
+    return visibleEvents;
+  }, [activeTab, productConfig.canUseCommunity, visibleEvents]);
 
   useEffect(() => {
     setLayerStates((prev) => {
