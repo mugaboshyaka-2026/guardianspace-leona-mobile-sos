@@ -1,5 +1,4 @@
 import React, { useState, createContext, useEffect } from 'react';
-import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -8,6 +7,7 @@ import OnboardingScreen from './src/screens/OnboardingScreen';
 import { AuthProvider, useAuth } from './src/lib/auth';
 import { colors } from './src/theme';
 import { useAOIs, useProfile, resetEventCache } from './src/hooks/useEvents';
+import BrandedLoader from './src/components/BrandedLoader';
 import { onEventUpdate } from './src/lib/realtime';
 import { addNotificationResponseListener, initNotifications, notifyRealtimeUpdate } from './src/lib/notifications';
 
@@ -32,7 +32,7 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <AppContext.Provider value={{ userConfig, handleOnboardingComplete, handleLogout }}>
+      <AppContext.Provider value={{ userConfig, setUserConfig, handleOnboardingComplete, handleLogout }}>
         <AppShell
           onboardingComplete={onboardingComplete}
           setOnboardingComplete={setOnboardingComplete}
@@ -48,6 +48,12 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
   const { isLoaded, isSignedIn, authReady } = useAuth();
   const { aois, loading: aoisLoading } = useAOIs(isSignedIn && authReady);
   const { profile, loading: profileLoading } = useProfile(isSignedIn && authReady);
+
+  useEffect(() => {
+    if (isSignedIn) {
+      setOnboardingComplete(false);
+    }
+  }, [isSignedIn, setOnboardingComplete]);
 
   useEffect(() => {
     if (!isSignedIn) {
@@ -101,7 +107,6 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       radius: Number(persistedRadius) || 0,
       eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (userConfig?.eventTypes || []),
     });
-    setOnboardingComplete(true);
   }, [aois, aoisLoading, authReady, isSignedIn, profile, profileLoading, setOnboardingComplete, setUserConfig, userConfig?.radius]);
 
   useEffect(() => {
@@ -159,11 +164,10 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
   }, [isSignedIn]);
 
   if (!isLoaded || (isSignedIn && authReady && (aoisLoading || profileLoading))) {
-    return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
+    return <BrandedLoader />;
   }
 
-  const hasConfiguredAois = aois.length > 0;
-  const showApp = onboardingComplete || (isSignedIn && hasConfiguredAois);
+  const showApp = onboardingComplete;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

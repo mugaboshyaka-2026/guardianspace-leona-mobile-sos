@@ -19,6 +19,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents, useAOIs, useLeonaChat, useLeonaBrief } from '../hooks/useEvents';
 import LeonaHeader from '../components/LeonaHeader';
+import SharedMarkdownMessage from '../components/MarkdownMessage';
 import { AppContext } from '../../App';
 import { getProductConfig, limitEventsForProduct } from '../lib/products';
 
@@ -28,6 +29,19 @@ const { width } = Dimensions.get('window');
 function extractBriefText(brief) {
   if (!brief) return '';
   return brief.brief || brief.summary || brief.text || brief.content || '';
+}
+
+function normalizeBriefText(text = '') {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function parseInlineSegments(text = '') {
@@ -235,6 +249,19 @@ function MarkdownMessage({ text, isAgent }) {
   );
 }
 
+const ChatMessageBubble = React.memo(function ChatMessageBubble({ item }) {
+  const isAgent = item.type === 'agent';
+
+  return (
+    <View style={[styles.messageBubbleContainer, isAgent ? styles.agentContainer : styles.userContainer]}>
+      {isAgent && <Image source={leonaAvatar} style={styles.chatAvatarImage} />}
+      <View style={[styles.messageBubble, isAgent ? styles.agentBubble : styles.userBubble]}>
+        <SharedMarkdownMessage text={item.text} tone={isAgent ? 'agent' : 'user'} />
+      </View>
+    </View>
+  );
+});
+
 const LeonaChatScreen = ({ navigation, route }) => {
   const { userConfig } = useContext(AppContext);
   const productConfig = getProductConfig(userConfig?.product);
@@ -336,8 +363,14 @@ const LeonaChatScreen = ({ navigation, route }) => {
       location: event.location,
     })),
   }), [USER_AOIS, myEvents.length, mySeverityCounts, myTopEvents]);
-  const { brief: worldBrief } = useLeonaBrief(worldBriefContext);
-  const { brief: myBrief } = useLeonaBrief(myBriefContext);
+  const { brief: worldBrief, loading: worldBriefLoading } = useLeonaBrief(
+    worldBriefContext,
+    activeSection === 'BRIEF' && activeBriefTab === 'WORLD'
+  );
+  const { brief: myBrief, loading: myBriefLoading } = useLeonaBrief(
+    myBriefContext,
+    activeSection === 'BRIEF' && activeBriefTab === 'MY'
+  );
   const worldNarrative = extractBriefText(worldBrief)
     || `${EVENTS.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`;
   const myNarrative = extractBriefText(myBrief)
@@ -356,13 +389,15 @@ const LeonaChatScreen = ({ navigation, route }) => {
     if (flatListRef.current) flatListRef.current.scrollToEnd({ animated: true });
   };
 
-  useEffect(() => { scrollToBottom(); }, [messages]);
+  useEffect(() => { scrollToBottom(); }, [messages.length]);
 
   const handleChipPress = (chipText) => {
+    if (sending) return;
     sendChat(chipText);
   };
 
   const handleSend = () => {
+    if (sending) return;
     if (inputText.trim()) {
       sendChat(inputText.trim());
       setInputText('');
@@ -483,7 +518,11 @@ const LeonaChatScreen = ({ navigation, route }) => {
       {/* Narrative */}
       <View style={styles.narrativeCard}>
         <Text style={styles.narrativeText}>
-          {worldNarrative}
+          {normalizeBriefText(
+            worldBriefLoading
+              ? `${EVENTS.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`
+              : worldNarrative
+          )}
         </Text>
       </View>
 
@@ -530,7 +569,11 @@ const LeonaChatScreen = ({ navigation, route }) => {
       <View style={styles.narrativeCard}>
         <Text style={styles.narrativeSectionTitle}>SITUATION SUMMARY</Text>
         <Text style={styles.narrativeText}>
-          {myNarrative}
+          {normalizeBriefText(
+            myBriefLoading
+              ? `Active monitoring across ${USER_AOIS.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`
+              : myNarrative
+          )}
         </Text>
       </View>
 
@@ -603,17 +646,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
   );
 
   // ===== CHAT =====
-  const renderMessage = ({ item }) => {
-    const isAgent = item.type === 'agent';
-    return (
-      <View style={[styles.messageBubbleContainer, isAgent ? styles.agentContainer : styles.userContainer]}>
-        {isAgent && <Image source={leonaAvatar} style={styles.chatAvatarImage} />}
-        <View style={[styles.messageBubble, isAgent ? styles.agentBubble : styles.userBubble]}>
-          <MarkdownMessage text={item.text} isAgent={isAgent} />
-        </View>
-      </View>
-    );
-  };
+  const renderMessage = useCallback(({ item }) => <ChatMessageBubble item={item} />, []);
 
   const renderTypingIndicator = () => (
     <View style={[styles.messageBubbleContainer, styles.agentContainer]}>
@@ -639,7 +672,12 @@ const LeonaChatScreen = ({ navigation, route }) => {
       {/* Quick Chips — compact pills above chat, all 6 visible */}
       <View style={styles.chipsSection}>
         {quickChips.map((chip, idx) => (
-          <TouchableOpacity key={idx} style={styles.chip} onPress={() => handleChipPress(chip)}>
+          <TouchableOpacity
+            key={idx}
+            style={[styles.chip, sending && styles.chipDisabled]}
+            onPress={() => handleChipPress(chip)}
+            disabled={sending}
+          >
             <Text style={styles.chipText}>{chip}</Text>
           </TouchableOpacity>
         ))}
@@ -1154,6 +1192,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 7,
     backgroundColor: colors.panel, borderColor: colors.purpleLight, borderWidth: 1, borderRadius: 20,
   },
+  chipDisabled: { opacity: 0.45 },
   chipText: { color: colors.purpleLight, fontSize: 12, fontWeight: '600' },
 
   // Input bar — attach + text + send

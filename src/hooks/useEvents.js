@@ -3,7 +3,7 @@
  * Centralizes API calls + caching so Map, Alerts, Briefs screens
  * all share the same data without redundant fetches.
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   fetchMyEvents,
   fetchWorldEvents,
@@ -32,6 +32,32 @@ const cache = {
 
 const STALE_MS = 60_000; // 1 min
 const subscribedAoiIds = new Set();
+const initialLeonaMessages = [
+  {
+    id: 'msg0',
+    type: 'agent',
+    text: "I'm monitoring active events globally. How can I help you today?",
+  },
+];
+const leonaChatStore = {
+  messages: initialLeonaMessages,
+  sending: false,
+  listeners: new Set(),
+};
+
+function emitLeonaChat() {
+  leonaChatStore.listeners.forEach((listener) =>
+    listener({
+      messages: leonaChatStore.messages,
+      sending: leonaChatStore.sending,
+    })
+  );
+}
+
+function updateLeonaChat(partial) {
+  Object.assign(leonaChatStore, partial);
+  emitLeonaChat();
+}
 
 export function resetEventCache() {
   cache.myEvents = null;
@@ -43,6 +69,9 @@ export function resetEventCache() {
   cache.favorites = null;
   cache.lastFetch = {};
   subscribedAoiIds.clear();
+  leonaChatStore.messages = initialLeonaMessages;
+  leonaChatStore.sending = false;
+  emitLeonaChat();
 }
 
 function isStale(key) {
@@ -305,21 +334,34 @@ export function useProfile(enabled = true) {
  * useLeonaChat — manages chat state with LEONA AI.
  */
 export function useLeonaChat() {
-  const [messages, setMessages] = useState([
-    {
-      id: 'msg0',
-      type: 'agent',
-      text: "I'm monitoring active events globally. How can I help you today?",
-    },
-  ]);
-  const [sending, setSending] = useState(false);
-  const messagesRef = useRef(messages);
+  const [messages, setMessages] = useState(leonaChatStore.messages);
+  const [sending, setSending] = useState(leonaChatStore.sending);
 
   useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+    const listener = (next) => {
+      setMessages(next.messages);
+      setSending(next.sending);
+    };
+
+    leonaChatStore.listeners.add(listener);
+    return () => {
+      leonaChatStore.listeners.delete(listener);
+    };
+  }, []);
+
+  const setSharedMessages = useCallback((next) => {
+    const resolvedMessages = typeof next === 'function' ? next(leonaChatStore.messages) : next;
+    updateLeonaChat({ messages: resolvedMessages });
+  }, []);
 
   const send = useCallback(async (userText, options = {}) => {
+    if (leonaChatStore.sending) {
+      console.log('[useLeonaChat] send:ignored while request in flight', {
+        requestKind: options.requestKind || 'generic',
+      });
+      return;
+    }
+
     const pendingId = `pending-${Date.now()}`;
     const startedAt = Date.now();
     console.log('[useLeonaChat] send:start', {
@@ -328,29 +370,27 @@ export function useLeonaChat() {
       promptLength: userText.length,
     });
     const userMsg = { id: Date.now().toString(), type: 'user', text: userText };
-    setMessages((prev) => [...prev, userMsg]);
+    const nextMessages = [...leonaChatStore.messages, userMsg];
     if (options.pendingText) {
-      setMessages((prev) => [
-        ...prev,
+      nextMessages.push(
         {
           id: pendingId,
           type: 'agent',
           text: options.pendingText,
           pending: true,
-        },
-      ]);
+        }
+      );
     }
-    setSending(true);
+    updateLeonaChat({ messages: nextMessages, sending: true });
 
     try {
       // Build messages array for API
-      const apiMessages = [
-        ...messagesRef.current.map((m) => ({
+      const apiMessages = nextMessages
+        .filter((m) => !m.pending)
+        .map((m) => ({
           role: m.type === 'agent' ? 'assistant' : 'user',
           content: m.text,
-        })),
-        { role: 'user', content: userText },
-      ];
+        }));
 
       const data = await sendLeonaMessage(apiMessages);
       const reply = data.message || data.reply || data.content || 'Processing your request...';
@@ -360,9 +400,8 @@ export function useLeonaChat() {
         replyLength: reply.length,
       });
       const agentMsg = { id: (Date.now() + 1).toString(), type: 'agent', text: reply };
-      setMessages((prev) => {
-        const withoutPending = prev.filter((msg) => msg.id !== pendingId);
-        return [...withoutPending, agentMsg];
+      updateLeonaChat({
+        messages: [...leonaChatStore.messages.filter((msg) => msg.id !== pendingId), agentMsg],
       });
     } catch (err) {
       console.warn('[useLeonaChat] send:failed', {
@@ -376,31 +415,34 @@ export function useLeonaChat() {
         type: 'agent',
         text: options.failureText || 'I\'m having trouble connecting to the server. Please try again shortly.',
       };
-      setMessages((prev) => {
-        const withoutPending = prev.filter((msg) => msg.id !== pendingId);
-        return [...withoutPending, agentMsg];
+      updateLeonaChat({
+        messages: [...leonaChatStore.messages.filter((msg) => msg.id !== pendingId), agentMsg],
       });
     } finally {
       console.log('[useLeonaChat] send:complete', {
         requestKind: options.requestKind || 'generic',
         elapsedMs: Date.now() - startedAt,
       });
-      setSending(false);
+      updateLeonaChat({ sending: false });
     }
   }, []);
 
-  return { messages, sending, send, setMessages };
+  return { messages, sending, send, setMessages: setSharedMessages };
 }
 
 /**
  * useLeonaBrief — fetches LEONA AI brief.
  */
-export function useLeonaBrief(context) {
+export function useLeonaBrief(context, enabled = true) {
   const [brief, setBrief] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const contextKey = JSON.stringify(context ?? null);
 
   const refresh = useCallback(async () => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const data = await getLeonaBrief(context);
@@ -411,7 +453,7 @@ export function useLeonaBrief(context) {
     } finally {
       setLoading(false);
     }
-  }, [contextKey]);
+  }, [contextKey, enabled]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

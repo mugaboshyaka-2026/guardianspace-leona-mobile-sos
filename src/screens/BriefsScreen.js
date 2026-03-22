@@ -17,6 +17,19 @@ function extractBriefText(brief) {
   return brief.brief || brief.summary || brief.text || brief.content || '';
 }
 
+function normalizeBriefText(text = '') {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 const severityOrder = { critical: 0, high: 1, elevated: 2, monitoring: 3 };
 
 const BriefsScreen = ({ navigation }) => {
@@ -81,8 +94,8 @@ const BriefsScreen = ({ navigation }) => {
       location: event.location,
     })),
   }), [userAois, myEvents.length, mySeverityCounts, myTopEvents]);
-  const { brief: worldBrief } = useLeonaBrief(worldBriefContext);
-  const { brief: myBrief } = useLeonaBrief(myBriefContext);
+  const { brief: worldBrief, loading: worldBriefLoading } = useLeonaBrief(worldBriefContext, activeTab === 'WORLD');
+  const { brief: myBrief, loading: myBriefLoading } = useLeonaBrief(myBriefContext, activeTab === 'MY');
 
   const tabs = [
     { label: 'WORLD BRIEF', value: 'WORLD' },
@@ -159,8 +172,12 @@ const BriefsScreen = ({ navigation }) => {
         <View style={styles.threatBar}>
           <View style={[styles.threatBarFill, { width: `${worldThreatScore}%` }]} />
         </View>
-        <Text style={styles.summaryNarrative}>
-          {extractBriefText(worldBrief) || `${events.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`}
+        <Text style={styles.briefNarrativeText}>
+          {normalizeBriefText(
+            worldBriefLoading
+              ? `${events.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`
+              : extractBriefText(worldBrief) || `${events.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`
+          )}
         </Text>
       </View>
 
@@ -184,9 +201,15 @@ const BriefsScreen = ({ navigation }) => {
           ))}
         </View>
 
-        <Text style={styles.narrativeText}>
-          {extractBriefText(myBrief) || `Active monitoring across ${userAois.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`}
-        </Text>
+        <View style={styles.narrativeCard}>
+          <Text style={styles.briefNarrativeText}>
+            {normalizeBriefText(
+              myBriefLoading
+                ? `Active monitoring across ${userAois.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`
+                : extractBriefText(myBrief) || `Active monitoring across ${userAois.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`
+            )}
+          </Text>
+        </View>
 
         <View style={styles.briefStats}>
           <View style={styles.briefStat}>
@@ -447,11 +470,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.high,
     borderRadius: 2,
   },
-  summaryNarrative: {
-    color: colors.textSec,
-    fontSize: 12,
-    lineHeight: 18,
-  },
   briefContainer: {
     paddingVertical: spacing.lg,
   },
@@ -492,11 +510,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  narrativeText: {
-    color: colors.text,
-    fontSize: 14,
-    lineHeight: 22,
+  narrativeCard: {
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.lg,
     marginBottom: spacing.lg,
+  },
+  briefNarrativeText: {
+    color: colors.textSec,
+    fontSize: 13,
+    lineHeight: 20,
   },
   briefStats: {
     flexDirection: 'row',

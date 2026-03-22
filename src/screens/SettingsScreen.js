@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useContext, useState } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,36 @@ import {
   Switch,
   TouchableOpacity,
   SafeAreaView,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { colors, spacing } from '../theme';
+import { AppContext } from '../../App';
+import { PRODUCT_CONFIGS, getProductConfig } from '../lib/products';
+import { resetEventCache, useAOIs } from '../hooks/useEvents';
+import { addAOI, deleteAOI } from '../lib/api';
+import { getLocationCoordinates, getLocationMetadata } from '../lib/locality';
+
+const DEFAULT_AOI_SUGGESTIONS = [
+  'Los Angeles, CA',
+  'New York, US',
+  'London, UK',
+  'Johannesburg, South Africa',
+  'Dubai, UAE',
+  'Singapore',
+  'Sydney, Australia',
+];
 
 const SettingsScreen = ({ navigation }) => {
+  const { userConfig, setUserConfig } = useContext(AppContext);
+  const productConfig = getProductConfig(userConfig?.product);
+  const plans = Object.values(PRODUCT_CONFIGS);
+  const { aois, refresh: refreshAois } = useAOIs();
+  const currentAois = aois.map((aoi) => ({
+    id: aoi?.id,
+    name: aoi?.name || aoi?.location_name || aoi?.location || String(aoi),
+  })).filter((aoi) => aoi.name);
+
   const [notifications, setNotifications] = useState(true);
   const [criticalOnly, setCriticalOnly] = useState(false);
   const [soundVibration, setSoundVibration] = useState(true);
@@ -21,9 +47,77 @@ const SettingsScreen = ({ navigation }) => {
   const [offlineCache, setOfflineCache] = useState(true);
   const [dataSaverMode, setDataSaverMode] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
-
   const [mapType, setMapType] = useState('2D');
   const [refreshInterval, setRefreshInterval] = useState('1m');
+  const [aoiBusy, setAoiBusy] = useState(false);
+
+  const handlePlanChange = (planId) => {
+    setUserConfig((prev) => ({
+      ...(prev || {}),
+      product: planId,
+    }));
+  };
+
+  const syncUserConfigAois = (nextAois) => {
+    setUserConfig((prev) => ({
+      ...(prev || {}),
+      aois: nextAois,
+      location: nextAois[0] || prev?.location,
+    }));
+  };
+
+  const handleAddAoi = async (aoiName) => {
+    const existing = new Set(currentAois.map((aoi) => aoi.name.toLowerCase()));
+    if (existing.has(aoiName.toLowerCase())) {
+      return;
+    }
+
+    const coordinates = getLocationCoordinates(aoiName);
+    const metadata = getLocationMetadata(aoiName);
+    if (!coordinates || !metadata) {
+      Alert.alert('Unsupported AOI', 'This location is not available in the mobile preset list yet.');
+      return;
+    }
+
+    setAoiBusy(true);
+    try {
+      await addAOI({
+        name: aoiName,
+        city: metadata.city,
+        country_code: metadata.country_code,
+        lat: coordinates.lat,
+        lng: coordinates.lng,
+        radius_km: Number(userConfig?.radius) || 50,
+        is_primary: currentAois.length === 0,
+      });
+      resetEventCache();
+      await refreshAois();
+      syncUserConfigAois([...currentAois.map((aoi) => aoi.name), aoiName]);
+    } catch (error) {
+      Alert.alert('AOI add failed', error?.message || 'Unable to add this area of interest.');
+    } finally {
+      setAoiBusy(false);
+    }
+  };
+
+  const handleRemoveAoi = async (aoi) => {
+    if (!aoi?.id) {
+      Alert.alert('AOI remove failed', 'This AOI cannot be removed because it has no server id.');
+      return;
+    }
+
+    setAoiBusy(true);
+    try {
+      await deleteAOI(aoi.id);
+      resetEventCache();
+      await refreshAois();
+      syncUserConfigAois(currentAois.filter((item) => item.id !== aoi.id).map((item) => item.name));
+    } catch (error) {
+      Alert.alert('AOI remove failed', error?.message || 'Unable to remove this area of interest.');
+    } finally {
+      setAoiBusy(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -40,32 +134,14 @@ const SettingsScreen = ({ navigation }) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* NOTIFICATIONS Section */}
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>NOTIFICATIONS</Text>
-          <SettingRow
-            label="Push Notifications"
-            value={notifications}
-            onToggle={setNotifications}
-          />
-          <SettingRow
-            label="Critical Alerts Only"
-            value={criticalOnly}
-            onToggle={setCriticalOnly}
-          />
-          <SettingRow
-            label="Sound & Vibration"
-            value={soundVibration}
-            onToggle={setSoundVibration}
-          />
-          <SettingRow
-            label="Email Digest"
-            value={emailDigest}
-            onToggle={setEmailDigest}
-          />
+          <SettingRow label="Push Notifications" value={notifications} onToggle={setNotifications} />
+          <SettingRow label="Critical Alerts Only" value={criticalOnly} onToggle={setCriticalOnly} />
+          <SettingRow label="Sound & Vibration" value={soundVibration} onToggle={setSoundVibration} />
+          <SettingRow label="Email Digest" value={emailDigest} onToggle={setEmailDigest} />
         </View>
 
-        {/* MAP & LAYERS Section */}
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>MAP & LAYERS</Text>
           <SelectorRow
@@ -74,16 +150,8 @@ const SettingsScreen = ({ navigation }) => {
             options={['2D', '3D', 'Satellite']}
             onSelect={setMapType}
           />
-          <SettingRow
-            label="Show Event Markers"
-            value={showMarkers}
-            onToggle={setShowMarkers}
-          />
-          <SettingRow
-            label="Show Risk Zones"
-            value={showRiskZones}
-            onToggle={setShowRiskZones}
-          />
+          <SettingRow label="Show Event Markers" value={showMarkers} onToggle={setShowMarkers} />
+          <SettingRow label="Show Risk Zones" value={showRiskZones} onToggle={setShowRiskZones} />
           <SelectorRow
             label="Auto-Refresh Interval"
             value={refreshInterval}
@@ -92,7 +160,6 @@ const SettingsScreen = ({ navigation }) => {
           />
         </View>
 
-        {/* DATA PREFERENCES Section */}
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>DATA PREFERENCES</Text>
           <SettingRow
@@ -101,27 +168,13 @@ const SettingsScreen = ({ navigation }) => {
             onToggle={setHighResImagery}
             subtitle="Uses more data"
           />
-          <SettingRow
-            label="Offline Cache"
-            value={offlineCache}
-            onToggle={setOfflineCache}
-          />
-          <SettingRow
-            label="Data Saver Mode"
-            value={dataSaverMode}
-            onToggle={setDataSaverMode}
-          />
+          <SettingRow label="Offline Cache" value={offlineCache} onToggle={setOfflineCache} />
+          <SettingRow label="Data Saver Mode" value={dataSaverMode} onToggle={setDataSaverMode} />
         </View>
 
-        {/* APPEARANCE Section */}
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>APPEARANCE</Text>
-          <SettingRow
-            label="Dark Mode"
-            value={darkMode}
-            onToggle={setDarkMode}
-            disabled={true}
-          />
+          <SettingRow label="Dark Mode" value={darkMode} onToggle={setDarkMode} disabled />
           <View style={styles.settingRow}>
             <View style={styles.settingLabel}>
               <Text style={styles.settingText}>Language</Text>
@@ -130,13 +183,104 @@ const SettingsScreen = ({ navigation }) => {
           </View>
         </View>
 
-        {/* DATA SOURCES Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionHeader}>SUBSCRIPTION</Text>
+          <View style={styles.planCard}>
+            <View style={styles.settingLabel}>
+              <Text style={styles.settingText}>Current Plan</Text>
+              <Text style={styles.subtitle}>{productConfig.label} · Select a different plan below</Text>
+            </View>
+            <View style={styles.planOptions}>
+              {plans.map((plan) => {
+                const isActive = plan.id === productConfig.id;
+                return (
+                  <TouchableOpacity
+                    key={plan.id}
+                    style={[
+                      styles.planPill,
+                      { borderColor: plan.accent },
+                      isActive && { backgroundColor: `${plan.accent}18` },
+                    ]}
+                    onPress={() => handlePlanChange(plan.id)}
+                    disabled={isActive}
+                  >
+                    <Text
+                      style={[
+                        styles.planPillText,
+                        { color: isActive ? plan.accent : colors.textSec },
+                      ]}
+                    >
+                      {plan.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <TouchableOpacity
+              style={styles.planDetailRow}
+              onPress={() => navigation.navigate('Subscription')}
+            >
+              <Text style={styles.planDetailText}>Open plan details</Text>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionHeader}>AREAS OF INTEREST</Text>
+          <View style={styles.planCard}>
+            <View style={styles.settingLabel}>
+              <Text style={styles.settingText}>Current AOIs</Text>
+              <Text style={styles.subtitle}>
+                Add or remove supported AOI presets directly here.
+              </Text>
+            </View>
+            <View style={styles.planOptions}>
+              {currentAois.length > 0 ? (
+                currentAois.map((aoi, idx) => (
+                  <TouchableOpacity
+                    key={`${aoi.name}-${idx}`}
+                    style={[styles.planPill, { borderColor: colors.blue }]}
+                    onPress={() => handleRemoveAoi(aoi)}
+                    disabled={aoiBusy}
+                  >
+                    <Text style={[styles.planPillText, { color: colors.blue }]}>{aoi.name} ×</Text>
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <Text style={styles.subtitle}>No AOIs are configured on this account.</Text>
+              )}
+            </View>
+            <View style={styles.aoiHelpBox}>
+              <Text style={styles.aoiHelpTitle}>Add AOI presets</Text>
+              <View style={styles.planOptions}>
+                {DEFAULT_AOI_SUGGESTIONS.map((aoi) => {
+                  const isActive = currentAois.some((item) => item.name.toLowerCase() === aoi.toLowerCase());
+                  return (
+                    <TouchableOpacity
+                      key={aoi}
+                      style={[
+                        styles.planPill,
+                        { borderColor: colors.purple },
+                        isActive && { opacity: 0.45 },
+                      ]}
+                      onPress={() => handleAddAoi(aoi)}
+                      disabled={isActive || aoiBusy}
+                    >
+                      <Text style={[styles.planPillText, { color: colors.purpleLight }]}>{aoi}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              {aoiBusy && <ActivityIndicator color={colors.blue} style={{ paddingTop: spacing.sm }} />}
+              <Text style={styles.aoiHelpText}>Tap an active AOI to remove it. Tap a preset below to add it.</Text>
+            </View>
+          </View>
+        </View>
+
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>DATA SOURCES</Text>
-          <TouchableOpacity
-            style={styles.settingRow}
-            onPress={() => navigation.navigate('DataSources')}
-          >
+          <TouchableOpacity style={styles.settingRow} onPress={() => navigation.navigate('DataSources')}>
             <View style={styles.settingLabel}>
               <Text style={styles.settingText}>Manage Data Feeds</Text>
               <Text style={styles.subtitle}>47 active feeds · 21 event types</Text>
@@ -177,7 +321,6 @@ const SettingsScreen = ({ navigation }) => {
           </View>
         </View>
 
-        {/* ABOUT Section */}
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>ABOUT</Text>
           <View style={styles.settingRow}>
@@ -196,13 +339,7 @@ const SettingsScreen = ({ navigation }) => {
   );
 };
 
-const SettingRow = ({
-  label,
-  value,
-  onToggle,
-  subtitle,
-  disabled = false,
-}) => (
+const SettingRow = ({ label, value, onToggle, subtitle, disabled = false }) => (
   <View style={styles.settingRow}>
     <View style={styles.settingLabel}>
       <Text style={styles.settingText}>{label}</Text>
@@ -211,10 +348,7 @@ const SettingRow = ({
     <Switch
       value={value}
       onValueChange={onToggle}
-      trackColor={{
-        false: colors.panel,
-        true: colors.purple,
-      }}
+      trackColor={{ false: colors.panel, true: colors.purple }}
       thumbColor={colors.white}
       disabled={disabled}
       style={styles.switch}
@@ -229,18 +363,10 @@ const SelectorRow = ({ label, value, options, onSelect }) => (
       {options.map((option) => (
         <TouchableOpacity
           key={option}
-          style={[
-            styles.selectorButton,
-            value === option && styles.selectorButtonActive,
-          ]}
+          style={[styles.selectorButton, value === option && styles.selectorButtonActive]}
           onPress={() => onSelect(option)}
         >
-          <Text
-            style={[
-              styles.selectorButtonText,
-              value === option && styles.selectorButtonTextActive,
-            ]}
-          >
+          <Text style={[styles.selectorButtonText, value === option && styles.selectorButtonTextActive]}>
             {option}
           </Text>
         </TouchableOpacity>
@@ -340,43 +466,94 @@ const styles = StyleSheet.create({
   selectorButton: {
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    borderRadius: 4,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.panel,
   },
   selectorButtonActive: {
-    backgroundColor: colors.purple,
-    borderColor: colors.purple,
+    borderColor: colors.blue,
+    backgroundColor: `${colors.blue}15`,
   },
   selectorButtonText: {
-    fontSize: 12,
     color: colors.textSec,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '600',
   },
   selectorButtonTextActive: {
-    color: colors.white,
+    color: colors.blue,
   },
   chevron: {
-    fontSize: 24,
-    color: colors.textSec,
+    color: colors.textDim,
+    fontSize: 18,
     marginLeft: spacing.md,
   },
   sourcesStatus: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: spacing.xs,
   },
   sourcesStatusDot: {
-    width: 7,
-    height: 7,
+    width: 8,
+    height: 8,
     borderRadius: 4,
-    backgroundColor: '#00E676',
+    backgroundColor: colors.safe,
   },
   sourcesStatusText: {
-    fontSize: 13,
-    color: '#00E676',
+    color: colors.safe,
+    fontSize: 12,
     fontWeight: '600',
+  },
+  planCard: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: spacing.md,
+    gap: spacing.md,
+  },
+  planOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  planPill: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderRadius: 999,
+    backgroundColor: colors.bg,
+  },
+  planPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  planDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: spacing.xs,
+  },
+  planDetailText: {
+    color: colors.blue,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  aoiHelpBox: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.md,
+    gap: spacing.xs,
+  },
+  aoiHelpTitle: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  aoiHelpText: {
+    color: colors.textDim,
+    fontSize: 12,
+    lineHeight: 18,
   },
 });
 
