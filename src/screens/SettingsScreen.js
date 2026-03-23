@@ -31,10 +31,14 @@ const SettingsScreen = ({ navigation }) => {
   const soundVibration = useMemo(() => (
     userConfig?.soundVibration ?? userConfig?.preferences?.sound_vibration ?? true
   ), [userConfig?.preferences?.sound_vibration, userConfig?.soundVibration]);
+  const showMarkers = useMemo(() => (
+    userConfig?.showEventMarkers ?? userConfig?.preferences?.show_event_markers ?? true
+  ), [userConfig?.preferences?.show_event_markers, userConfig?.showEventMarkers]);
+  const showRiskZones = useMemo(() => (
+    userConfig?.showRiskZones ?? userConfig?.preferences?.show_risk_zones ?? true
+  ), [userConfig?.preferences?.show_risk_zones, userConfig?.showRiskZones]);
 
   const [emailDigest, setEmailDigest] = useState(false);
-  const [showMarkers, setShowMarkers] = useState(true);
-  const [showRiskZones, setShowRiskZones] = useState(true);
   const [highResImagery, setHighResImagery] = useState(false);
   const [offlineCache, setOfflineCache] = useState(true);
   const [dataSaverMode, setDataSaverMode] = useState(false);
@@ -82,6 +86,14 @@ const SettingsScreen = ({ navigation }) => {
     handleNotificationToggle('soundVibration', 'sound_vibration', value);
   };
 
+  const handleShowMarkersToggle = (value) => {
+    handleNotificationToggle('showEventMarkers', 'show_event_markers', value);
+  };
+
+  const handleShowRiskZonesToggle = (value) => {
+    handleNotificationToggle('showRiskZones', 'show_risk_zones', value);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -113,8 +125,8 @@ const SettingsScreen = ({ navigation }) => {
             options={['2D', '3D', 'Satellite']}
             onSelect={setMapType}
           />
-          <SettingRow label="Show Event Markers" value={showMarkers} onToggle={setShowMarkers} />
-          <SettingRow label="Show Risk Zones" value={showRiskZones} onToggle={setShowRiskZones} />
+          <SettingRow label="Show Event Markers" value={showMarkers} onToggle={handleShowMarkersToggle} />
+          <SettingRow label="Show Risk Zones" value={showRiskZones} onToggle={handleShowRiskZonesToggle} />
           <SelectorRow
             label="Auto-Refresh Interval"
             value={refreshInterval}

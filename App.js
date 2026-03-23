@@ -135,6 +135,18 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         ?? profile?.preferences?.soundVibration
         ?? userConfig?.soundVibration
         ?? true;
+      const persistedShowMarkers = localPreferences?.show_event_markers
+        ?? localPreferences?.showEventMarkers
+        ?? profile?.preferences?.show_event_markers
+        ?? profile?.preferences?.showEventMarkers
+        ?? userConfig?.showEventMarkers
+        ?? true;
+      const persistedShowRiskZones = localPreferences?.show_risk_zones
+        ?? localPreferences?.showRiskZones
+        ?? profile?.preferences?.show_risk_zones
+        ?? profile?.preferences?.showRiskZones
+        ?? userConfig?.showRiskZones
+        ?? true;
       const persistedAois = aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean);
 
       if (!persistedAois.length) {
@@ -163,6 +175,8 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         criticalOnly: Boolean(persistedCriticalOnly),
         pushNotifications: Boolean(persistedPushNotifications),
         soundVibration: Boolean(persistedSoundVibration),
+        showEventMarkers: Boolean(persistedShowMarkers),
+        showRiskZones: Boolean(persistedShowRiskZones),
         preferences: {
           ...(prev?.preferences || {}),
           ...(profile?.preferences || {}),
@@ -170,6 +184,8 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
           critical_only: Boolean(persistedCriticalOnly),
           push_notifications: Boolean(persistedPushNotifications),
           sound_vibration: Boolean(persistedSoundVibration),
+          show_event_markers: Boolean(persistedShowMarkers),
+          show_risk_zones: Boolean(persistedShowRiskZones),
         },
       }));
       console.log('[App] userConfig hydrated', {
@@ -180,6 +196,8 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         criticalOnly: Boolean(persistedCriticalOnly),
         pushNotifications: Boolean(persistedPushNotifications),
         soundVibration: Boolean(persistedSoundVibration),
+        showEventMarkers: Boolean(persistedShowMarkers),
+        showRiskZones: Boolean(persistedShowRiskZones),
       });
     };
 

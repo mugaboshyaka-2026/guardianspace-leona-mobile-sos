@@ -65,6 +65,8 @@ const MapHomeScreen = ({ navigation }) => {
 
   const { events: myEvents } = useMyEvents();
   const { events: worldEvents } = useWorldEvents();
+  const showEventMarkers = userConfig?.showEventMarkers ?? userConfig?.preferences?.show_event_markers ?? true;
+  const showRiskZones = userConfig?.showRiskZones ?? userConfig?.preferences?.show_risk_zones ?? true;
   const availableLayers = useMemo(
     () => layers.filter((layer) => productConfig.enabledMapLayers.includes(layer.key)),
     [productConfig.enabledMapLayers]
@@ -99,6 +101,10 @@ const MapHomeScreen = ({ navigation }) => {
     () => scopedEvents.filter((event) => productConfig.enabledMapLayers.includes(event.type) && layerStates[event.type] !== false),
     [productConfig.enabledMapLayers, scopedEvents, layerStates]
   );
+  const mapMarkerEvents = useMemo(
+    () => (showEventMarkers ? visibleEvents : []),
+    [showEventMarkers, visibleEvents]
+  );
 
   const filteredEvents = useMemo(() => {
     if (activeTab === 'COMMUNITY' && !productConfig.canUseCommunity) return [];
@@ -122,6 +128,12 @@ const MapHomeScreen = ({ navigation }) => {
       setActiveTab('MY_ALERTS');
     }
   }, [activeTab, productConfig.canUseCommunity]);
+
+  useEffect(() => {
+    if (!showRiskZones && layersVisible) {
+      setLayersVisible(false);
+    }
+  }, [layersVisible, showRiskZones]);
 
   useEffect(() => {
     const region = mapScope === 'LOCAL' ? localRegion : GLOBAL_REGION;
@@ -193,7 +205,7 @@ const MapHomeScreen = ({ navigation }) => {
         showsScale={false}
         showsUserLocation={false}
       >
-        {visibleEvents.map((event) => (
+        {mapMarkerEvents.map((event) => (
           <Marker
             key={event.id}
             coordinate={{ latitude: event.lat, longitude: event.lng }}
@@ -234,7 +246,7 @@ const MapHomeScreen = ({ navigation }) => {
         <View style={styles.topBarRow2}>
           <View style={styles.livePill}>
             <View style={styles.liveDotSmall} />
-            <Text style={styles.livePillText}>{visibleEvents.length} LIVE</Text>
+            <Text style={styles.livePillText}>{mapMarkerEvents.length} LIVE</Text>
           </View>
           <View style={styles.scopeToggle}>
             <TouchableOpacity
@@ -275,13 +287,18 @@ const MapHomeScreen = ({ navigation }) => {
         <View style={styles.mapToolDivider} />
 
         <TouchableOpacity
-          style={[styles.mapToolBtn, layersVisible && styles.mapToolBtnActive]}
-          onPress={() => setLayersVisible((prev) => !prev)}
+          style={[styles.mapToolBtn, layersVisible && styles.mapToolBtnActive, !showRiskZones && styles.mapToolBtnDisabled]}
+          onPress={() => {
+            if (!showRiskZones) {
+              return;
+            }
+            setLayersVisible((prev) => !prev);
+          }}
         >
           <View style={styles.layerIconStack}>
-            <View style={[styles.layerLine, layersVisible && { backgroundColor: colors.blue }]} />
-            <View style={[styles.layerLine, { width: 14 }, layersVisible && { backgroundColor: colors.blue }]} />
-            <View style={[styles.layerLine, { width: 10 }, layersVisible && { backgroundColor: colors.blue }]} />
+            <View style={[styles.layerLine, layersVisible && showRiskZones && { backgroundColor: colors.blue }, !showRiskZones && styles.layerLineDisabled]} />
+            <View style={[styles.layerLine, { width: 14 }, layersVisible && showRiskZones && { backgroundColor: colors.blue }, !showRiskZones && styles.layerLineDisabled]} />
+            <View style={[styles.layerLine, { width: 10 }, layersVisible && showRiskZones && { backgroundColor: colors.blue }, !showRiskZones && styles.layerLineDisabled]} />
           </View>
         </TouchableOpacity>
 
@@ -310,7 +327,7 @@ const MapHomeScreen = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
-      {layersVisible ? (
+      {layersVisible && showRiskZones ? (
         <View style={styles.layersPanel}>
           <View style={styles.layersPanelHeader}>
             <Text style={styles.layersPanelTitle}>MAP LAYERS</Text>
@@ -556,6 +573,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   mapToolBtnActive: { backgroundColor: `${colors.blue}18` },
+  mapToolBtnDisabled: { opacity: 0.45 },
   mapToolBtnText: { color: '#333', fontSize: 22, fontWeight: '300' },
   mapToolIcon: { color: '#444', fontSize: 18 },
   mapToolIconLg: { color: '#444', fontSize: 18 },
@@ -567,6 +585,7 @@ const styles = StyleSheet.create({
   extentCornerBR: { position: 'absolute', bottom: 0, right: 0, width: 6, height: 6, borderBottomWidth: 2, borderRightWidth: 2, borderColor: '#555' },
   layerIconStack: { gap: 2, alignItems: 'center' },
   layerLine: { width: 18, height: 2, backgroundColor: '#666', borderRadius: 1 },
+  layerLineDisabled: { backgroundColor: '#999' },
   layersPanel: {
     position: 'absolute',
     left: spacing.sm + 46,
