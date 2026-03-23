@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
-import { useMyEvents, useWorldEvents, useAOIs, useLeonaBrief } from '../hooks/useEvents';
+import { useMyEvents, useWorldEvents, useAOIs, useLeonaBrief, useLeonaChat } from '../hooks/useEvents';
 import LeonaHeader from '../components/LeonaHeader';
 import { AppContext } from '../../App';
 import { filterEventsForConfig } from '../lib/locality';
@@ -53,6 +53,7 @@ const BriefsScreen = ({ navigation }) => {
   const { events: myEvents } = useMyEvents();
   const { events: worldEvents } = useWorldEvents();
   const { aois } = useAOIs();
+  const { send: sendChat, sending: chatSending, setMessages } = useLeonaChat();
   const events = useMemo(
     () => [...new Map([...myEvents, ...worldEvents].map((event) => [event.id, event])).values()],
     [myEvents, worldEvents]
@@ -180,18 +181,66 @@ const BriefsScreen = ({ navigation }) => {
   ];
 
   const handleChatPress = () => {
-    navigation.navigate('LeonaTab', {
-      screen: 'LeonaChat',
-      params: {
-        initialSection: 'CHAT',
-        requestKey: `brief-chat-${activeTab}-${Date.now()}`,
-        initialBriefTab: activeTab,
-        initialPrompt: activeTab === 'MY'
-          ? `Give me a concise briefing for my areas of interest: ${userAois.join(', ') || 'my configured AOIs'}. Current matched events: ${myScopedEvents.length}. Selected event types: ${(userConfig?.eventTypes || []).join(', ') || 'all configured types'}. Radius: ${userConfig?.radius || 0} km.`
-          : activeTab === 'COUNTRY'
-            ? `Give me a concise country risk briefing for ${countryRiskTarget}. Current matched events: ${countryMatchedEvents.length}. Critical: ${countrySeverityCounts.critical}, High: ${countrySeverityCounts.high}, Elevated: ${countrySeverityCounts.elevated}, Monitoring: ${countrySeverityCounts.monitoring}.`
-            : `Give me a concise global risk briefing. Current global event count: ${events.length}. Critical: ${severityCounts.critical}, High: ${severityCounts.high}, Elevated: ${severityCounts.elevated}, Monitoring: ${severityCounts.monitoring}.`,
-      },
+    const requestKey = `brief-chat-${activeTab}-${Date.now()}`;
+    const prompt = activeTab === 'MY'
+      ? `Give me a concise briefing for my areas of interest: ${userAois.join(', ') || 'my configured AOIs'}. Current matched events: ${myScopedEvents.length}. Selected event types: ${(userConfig?.eventTypes || []).join(', ') || 'all configured types'}. Radius: ${userConfig?.radius || 0} km.`
+      : activeTab === 'COUNTRY'
+        ? `Give me a concise country risk briefing for ${countryRiskTarget}. Current matched events: ${countryMatchedEvents.length}. Critical: ${countrySeverityCounts.critical}, High: ${countrySeverityCounts.high}, Elevated: ${countrySeverityCounts.elevated}, Monitoring: ${countrySeverityCounts.monitoring}.`
+        : `Give me a concise global risk briefing. Current global event count: ${events.length}. Critical: ${severityCounts.critical}, High: ${severityCounts.high}, Elevated: ${severityCounts.elevated}, Monitoring: ${severityCounts.monitoring}.`;
+
+    console.log('[BriefsScreen] ask-brief:clicked', {
+      requestKey,
+      activeTab,
+      promptLength: prompt.length,
+    });
+
+    if (!chatSending) {
+      const pendingMessageId = `pending-brief-${Date.now()}`;
+      setMessages((prev) => ([
+        ...prev,
+        { id: `brief-user-${Date.now()}`, type: 'user', text: prompt },
+        {
+          id: pendingMessageId,
+          type: 'agent',
+          text: 'LEONA is preparing your detailed brief...',
+          pending: true,
+        },
+      ]));
+      sendChat(prompt, {
+        requestKind: 'brief-handoff',
+        pendingText: 'LEONA is preparing your detailed brief...',
+        failureText: 'LEONA could not generate the brief right now. Please retry from the brief screen or ask a shorter follow-up.',
+        skipLocalEcho: true,
+        pendingMessageId,
+        context: {
+          scope: activeTab === 'MY' ? 'local_aoi' : activeTab === 'COUNTRY' ? 'country_risk' : 'world',
+          aois: userAois,
+          radius_km: userConfig?.radius || 0,
+          event_types: userConfig?.eventTypes || [],
+          event_summary: {
+            local_event_count: myScopedEvents.length,
+            global_event_count: events.length,
+            local_severity_counts: mySeverityCounts,
+            global_severity_counts: severityCounts,
+            country_event_count: countryMatchedEvents.length,
+            country_severity_counts: countrySeverityCounts,
+          },
+          current_events: (activeTab === 'MY' ? myTopEvents : activeTab === 'COUNTRY' ? countryEvents : topEvents).map((event) => ({
+            id: event.id,
+            title: event.title,
+            type: event.type,
+            severity: event.severity,
+            location: event.location,
+          })),
+        },
+      });
+    }
+
+    navigation.navigate('LeonaChat', {
+      initialSection: 'CHAT',
+      initialBriefTab: activeTab,
+      requestKey,
+      initialPrompt: prompt,
     });
   };
 
@@ -297,6 +346,10 @@ const BriefsScreen = ({ navigation }) => {
         text: extractBriefText(worldBrief),
         onRetry: refreshWorldBrief,
       })}
+
+      <TouchableOpacity style={styles.footerLink} onPress={handleChatPress}>
+        <Text style={styles.footerLinkText}>Ask LEONA for a full brief -></Text>
+      </TouchableOpacity>
 
       <View style={{ height: 40 }} />
     </ScrollView>

@@ -43,6 +43,7 @@ const leonaChatStore = {
   messages: initialLeonaMessages,
   sending: false,
   listeners: new Set(),
+  queuedRequest: null,
 };
 
 function emitLeonaChat() {
@@ -57,6 +58,94 @@ function emitLeonaChat() {
 function updateLeonaChat(partial) {
   Object.assign(leonaChatStore, partial);
   emitLeonaChat();
+}
+
+async function executeLeonaChatSend(userText, options = {}) {
+  const pendingId = options.pendingMessageId || `pending-${Date.now()}`;
+  const startedAt = Date.now();
+  console.log('[useLeonaChat] send:start', {
+    requestKind: options.requestKind || 'generic',
+    hasPendingText: !!options.pendingText,
+    promptLength: userText.length,
+  });
+
+  const nextMessages = options.skipLocalEcho
+    ? leonaChatStore.messages
+    : [...leonaChatStore.messages, { id: Date.now().toString(), type: 'user', text: userText }];
+  if (options.pendingText && !options.skipLocalEcho) {
+    nextMessages.push({
+      id: pendingId,
+      type: 'agent',
+      text: options.pendingText,
+      pending: true,
+    });
+  }
+  updateLeonaChat({ messages: nextMessages, sending: true });
+
+  try {
+    const apiMessages = nextMessages
+      .filter((m) => !m.pending)
+      .map((m) => ({
+        role: m.type === 'agent' ? 'assistant' : 'user',
+        content: m.text,
+      }));
+    const contextMessage = buildLeonaContextMessage(options.context);
+    const requestMessages = contextMessage
+      ? apiMessages.map((message, index) => {
+          if (index !== apiMessages.length - 1 || message.role !== 'user') {
+            return message;
+          }
+          return {
+            ...message,
+            content: `${contextMessage}\n\nUser request: ${message.content}`,
+          };
+        })
+      : apiMessages;
+
+    const data = await sendLeonaMessage(requestMessages);
+    const reply = data.message || data.reply || data.content || 'Processing your request...';
+    console.log('[useLeonaChat] send:success', {
+      requestKind: options.requestKind || 'generic',
+      elapsedMs: Date.now() - startedAt,
+      replyLength: reply.length,
+    });
+    const agentMsg = { id: (Date.now() + 1).toString(), type: 'agent', text: reply };
+    updateLeonaChat({
+      messages: [...leonaChatStore.messages.filter((msg) => msg.id !== pendingId), agentMsg],
+    });
+  } catch (err) {
+    console.warn('[useLeonaChat] send:failed', {
+      requestKind: options.requestKind || 'generic',
+      elapsedMs: Date.now() - startedAt,
+      error: err.message,
+    });
+    const agentMsg = {
+      id: (Date.now() + 1).toString(),
+      type: 'agent',
+      text: options.failureText || 'I\'m having trouble connecting to the server. Please try again shortly.',
+    };
+    updateLeonaChat({
+      messages: [...leonaChatStore.messages.filter((msg) => msg.id !== pendingId), agentMsg],
+    });
+  } finally {
+    console.log('[useLeonaChat] send:complete', {
+      requestKind: options.requestKind || 'generic',
+      elapsedMs: Date.now() - startedAt,
+    });
+    updateLeonaChat({ sending: false });
+    if (leonaChatStore.queuedRequest) {
+      const nextRequest = leonaChatStore.queuedRequest;
+      leonaChatStore.queuedRequest = null;
+      if (nextRequest.queuedPendingId || nextRequest.queuedUserMsgId) {
+        updateLeonaChat({
+          messages: leonaChatStore.messages.filter((message) => (
+            message.id !== nextRequest.queuedPendingId && message.id !== nextRequest.queuedUserMsgId
+          )),
+        });
+      }
+      executeLeonaChatSend(nextRequest.userText, nextRequest.options);
+    }
+  }
 }
 
 function buildLeonaContextMessage(context) {
@@ -369,87 +458,35 @@ export function useLeonaChat() {
 
   const send = useCallback(async (userText, options = {}) => {
     if (leonaChatStore.sending) {
-      console.log('[useLeonaChat] send:ignored while request in flight', {
+      console.log('[useLeonaChat] send:queued while request in flight', {
         requestKind: options.requestKind || 'generic',
       });
-      return;
-    }
-
-    const pendingId = `pending-${Date.now()}`;
-    const startedAt = Date.now();
-    console.log('[useLeonaChat] send:start', {
-      requestKind: options.requestKind || 'generic',
-      hasPendingText: !!options.pendingText,
-      promptLength: userText.length,
-    });
-    const userMsg = { id: Date.now().toString(), type: 'user', text: userText };
-    const nextMessages = [...leonaChatStore.messages, userMsg];
-    if (options.pendingText) {
-      nextMessages.push(
-        {
-          id: pendingId,
+      const queuedUserMsg = { id: Date.now().toString(), type: 'user', text: userText };
+      const queuedPendingId = `pending-queued-${Date.now()}`;
+      const queuedMessages = [...leonaChatStore.messages, queuedUserMsg];
+      if (options.pendingText) {
+        queuedMessages.push({
+          id: queuedPendingId,
           type: 'agent',
           text: options.pendingText,
           pending: true,
-        }
-      );
-    }
-    updateLeonaChat({ messages: nextMessages, sending: true });
-
-    try {
-      // Build messages array for API
-      const apiMessages = nextMessages
-        .filter((m) => !m.pending)
-        .map((m) => ({
-          role: m.type === 'agent' ? 'assistant' : 'user',
-          content: m.text,
-        }));
-      const contextMessage = buildLeonaContextMessage(options.context);
-      const requestMessages = contextMessage
-        ? apiMessages.map((message, index) => {
-            if (index !== apiMessages.length - 1 || message.role !== 'user') {
-              return message;
-            }
-            return {
-              ...message,
-              content: `${contextMessage}\n\nUser request: ${message.content}`,
-            };
-          })
-        : apiMessages;
-
-      const data = await sendLeonaMessage(requestMessages);
-      const reply = data.message || data.reply || data.content || 'Processing your request...';
-      console.log('[useLeonaChat] send:success', {
-        requestKind: options.requestKind || 'generic',
-        elapsedMs: Date.now() - startedAt,
-        replyLength: reply.length,
-      });
-      const agentMsg = { id: (Date.now() + 1).toString(), type: 'agent', text: reply };
-      updateLeonaChat({
-        messages: [...leonaChatStore.messages.filter((msg) => msg.id !== pendingId), agentMsg],
-      });
-    } catch (err) {
-      console.warn('[useLeonaChat] send:failed', {
-        requestKind: options.requestKind || 'generic',
-        elapsedMs: Date.now() - startedAt,
-        error: err.message,
-      });
-      // Fallback response
-      const agentMsg = {
-        id: (Date.now() + 1).toString(),
-        type: 'agent',
-        text: options.failureText || 'I\'m having trouble connecting to the server. Please try again shortly.',
+        });
+      }
+      updateLeonaChat({ messages: queuedMessages });
+      leonaChatStore.queuedRequest = {
+        userText,
+        options,
+        queuedPendingId,
+        queuedUserMsgId: queuedUserMsg.id,
       };
-      updateLeonaChat({
-        messages: [...leonaChatStore.messages.filter((msg) => msg.id !== pendingId), agentMsg],
+      console.log('[useLeonaChat] send:queued:stored', {
+        userText,
+        queuedPendingId,
+        queuedUserMsgId: queuedUserMsg.id,
       });
-    } finally {
-      console.log('[useLeonaChat] send:complete', {
-        requestKind: options.requestKind || 'generic',
-        elapsedMs: Date.now() - startedAt,
-      });
-      updateLeonaChat({ sending: false });
+      return;
     }
+    await executeLeonaChatSend(userText, options);
   }, []);
 
   return { messages, sending, send, setMessages: setSharedMessages };

@@ -15,7 +15,6 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents, useAOIs, useLeonaChat, useLeonaBrief } from '../hooks/useEvents';
 import LeonaHeader from '../components/LeonaHeader';
@@ -284,7 +283,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
   };
 
   // ── Live API data ──
-  const { messages, sending, send: sendChat } = useLeonaChat();
+  const { messages, sending, send: sendChat, setMessages } = useLeonaChat();
   const { events: myEvents } = useMyEvents();
   const { events: worldEvents } = useWorldEvents();
   const { aois } = useAOIs();
@@ -456,6 +455,66 @@ const LeonaChatScreen = ({ navigation, route }) => {
     sendChatWithContext(chipText);
   };
 
+  const handleAskBriefPress = useCallback(() => {
+    setActiveSection('CHAT');
+
+    if (sending) return;
+
+    const isMyBrief = activeBriefTab === 'MY';
+    const prompt = isMyBrief
+      ? `Give me a concise briefing for my areas of interest: ${userAois.join(', ') || 'my configured AOIs'}. Current matched events: ${myScopedEvents.length}. Selected event types: ${(userConfig?.eventTypes || []).join(', ') || 'all configured types'}. Radius: ${userConfig?.radius || 0} km.`
+      : `Give me a concise global risk briefing. Current global event count: ${EVENTS.length}. Critical: ${severityCounts.critical}, High: ${severityCounts.high}, Elevated: ${severityCounts.elevated}, Monitoring: ${severityCounts.monitoring}.`;
+    const pendingMessageId = `pending-brief-${Date.now()}`;
+
+    setMessages((prev) => ([
+      ...prev,
+      { id: `brief-user-${Date.now()}`, type: 'user', text: prompt },
+      {
+        id: pendingMessageId,
+        type: 'agent',
+        text: 'LEONA is preparing your detailed brief...',
+        pending: true,
+      },
+    ]));
+
+    sendChat(prompt, {
+      requestKind: 'brief-handoff',
+      pendingText: 'LEONA is preparing your detailed brief...',
+      failureText: 'LEONA could not generate the brief right now. Please retry from the brief screen or ask a shorter follow-up.',
+      skipLocalEcho: true,
+      pendingMessageId,
+      context: {
+        ...chatContext,
+        scope: isMyBrief ? 'local_aoi' : 'world',
+        current_view: {
+          section: 'CHAT',
+          brief_tab: activeBriefTab,
+        },
+        current_events: (isMyBrief ? myTopEvents : topEvents).map((event) => ({
+          id: event.id,
+          title: event.title,
+          type: event.type,
+          severity: event.severity,
+          location: event.location,
+        })),
+      },
+    });
+  }, [
+    EVENTS.length,
+    activeBriefTab,
+    chatContext,
+    myScopedEvents.length,
+    myTopEvents,
+    sending,
+    sendChat,
+    setMessages,
+    severityCounts,
+    topEvents,
+    userAois,
+    userConfig?.eventTypes,
+    userConfig?.radius,
+  ]);
+
   const handleSend = () => {
     if (sending) return;
     if (inputText.trim()) {
@@ -464,61 +523,71 @@ const LeonaChatScreen = ({ navigation, route }) => {
     }
   };
 
-  useFocusEffect(
-    useCallback(() => {
-      const requestKey = route?.params?.requestKey;
-      const initialSection = route?.params?.initialSection;
-      const initialBriefTab = route?.params?.initialBriefTab;
-      const initialPrompt = route?.params?.initialPrompt;
+  useEffect(() => {
+    const requestKey = route?.params?.requestKey;
+    const initialSection = route?.params?.initialSection;
+    const initialBriefTab = route?.params?.initialBriefTab;
+    const initialPrompt = route?.params?.initialPrompt;
 
-      if (initialSection) {
-        setActiveSection(initialSection);
-      }
+    if (initialSection) {
+      setActiveSection(initialSection);
+    }
 
-      if (initialBriefTab) {
-        setActiveBriefTab(initialBriefTab);
-      }
+    if (initialBriefTab) {
+      setActiveBriefTab(initialBriefTab);
+    }
 
-      if (!requestKey || !initialPrompt || lastHandledRequestRef.current === requestKey) {
-        return undefined;
-      }
+    const latestUserMessage = [...messages].reverse().find((message) => message?.type === 'user');
+    const promptAlreadyQueued = latestUserMessage?.text === initialPrompt;
 
-      console.log('[LeonaChatScreen] event-analysis:queued', {
-        requestKey,
-        initialSection: initialSection || null,
-        initialBriefTab: initialBriefTab || null,
-        promptLength: initialPrompt.length,
-      });
-
-      const timer = setTimeout(() => {
+    if (!requestKey || !initialPrompt || lastHandledRequestRef.current === requestKey || promptAlreadyQueued) {
+      if (promptAlreadyQueued) {
         lastHandledRequestRef.current = requestKey;
-        setInputText('');
-        console.log('[LeonaChatScreen] event-analysis:dispatch', {
-          requestKey,
-        });
-        sendChatWithContext(initialPrompt, {
-          requestKind: 'event-analysis',
-          pendingText: 'LEONA is analyzing this event. Pulling current signals, impact context, and recommended actions...',
-          failureText: 'LEONA could not finish the event analysis in time. Please retry from the event or ask a shorter follow-up question.',
-        });
-        navigation.setParams({
-          requestKey: undefined,
-          initialPrompt: undefined,
-          initialSection,
-          initialBriefTab,
-        });
-      }, 150);
+      }
+      return undefined;
+    }
 
-      return () => clearTimeout(timer);
-    }, [
-      navigation,
-      route?.params?.initialBriefTab,
-      route?.params?.initialPrompt,
-      route?.params?.initialSection,
-      route?.params?.requestKey,
-      sendChatWithContext,
-    ])
-  );
+    if (sending) {
+      return undefined;
+    }
+
+    console.log('[LeonaChatScreen] event-analysis:queued', {
+      requestKey,
+      initialSection: initialSection || null,
+      initialBriefTab: initialBriefTab || null,
+      promptLength: initialPrompt.length,
+    });
+
+    const timer = setTimeout(() => {
+      console.log('[LeonaChatScreen] event-analysis:dispatch', {
+        requestKey,
+      });
+      sendChatWithContext(initialPrompt, {
+        requestKind: 'event-analysis',
+        pendingText: 'LEONA is analyzing this event. Pulling current signals, impact context, and recommended actions...',
+        failureText: 'LEONA could not finish the event analysis in time. Please retry from the event or ask a shorter follow-up question.',
+      });
+      lastHandledRequestRef.current = requestKey;
+      setInputText('');
+      navigation.setParams({
+        requestKey: undefined,
+        initialPrompt: undefined,
+        initialSection,
+        initialBriefTab,
+      });
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [
+    messages,
+    navigation,
+    route?.params?.initialBriefTab,
+    route?.params?.initialPrompt,
+    route?.params?.initialSection,
+    route?.params?.requestKey,
+    sending,
+    sendChatWithContext,
+  ]);
 
   // ===== WORLD BRIEF =====
   const renderWorldBrief = () => (
@@ -696,7 +765,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
       {/* CTA */}
       <TouchableOpacity
         style={styles.askLeonaBtn}
-        onPress={() => setActiveSection('CHAT')}
+        onPress={handleAskBriefPress}
       >
         <Text style={styles.askLeonaBtnText}>Ask LEONA for a detailed brief →</Text>
       </TouchableOpacity>
