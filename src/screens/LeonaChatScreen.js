@@ -22,6 +22,7 @@ import LeonaHeader from '../components/LeonaHeader';
 import SharedMarkdownMessage from '../components/MarkdownMessage';
 import { AppContext } from '../../App';
 import { getProductConfig, limitEventsForProduct } from '../lib/products';
+import { filterEventsForConfig } from '../lib/locality';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 const { width } = Dimensions.get('window');
@@ -287,6 +288,14 @@ const LeonaChatScreen = ({ navigation, route }) => {
   const { events: myEvents } = useMyEvents();
   const { events: worldEvents } = useWorldEvents();
   const { aois } = useAOIs();
+  const userAois = useMemo(() => {
+    if (Array.isArray(userConfig?.aois) && userConfig.aois.length > 0) {
+      return userConfig.aois;
+    }
+    return aois
+      .map((aoi) => aoi?.name || aoi?.location_name || aoi?.location || String(aoi))
+      .filter(Boolean);
+  }, [aois, userConfig?.aois]);
   const EVENTS = useMemo(
     () => limitEventsForProduct(
       [...new Map([...myEvents, ...worldEvents].map((event) => [event.id, event])).values()],
@@ -294,7 +303,13 @@ const LeonaChatScreen = ({ navigation, route }) => {
     ),
     [myEvents, userConfig?.product, worldEvents]
   );
-  const USER_AOIS = useMemo(() => aois.map((a) => a.name || a), [aois]);
+  const myScopedEvents = useMemo(
+    () => limitEventsForProduct(
+      filterEventsForConfig(myEvents.length > 0 ? myEvents : worldEvents, userConfig, 'local'),
+      userConfig?.product
+    ),
+    [myEvents, userConfig, worldEvents]
+  );
 
   // Top-level tabs: CHAT (left) · BRIEFS (right) — equal width
   const sections = [
@@ -319,10 +334,10 @@ const LeonaChatScreen = ({ navigation, route }) => {
     monitoring: EVENTS.filter((e) => e.severity === 'monitoring').length,
   };
   const mySeverityCounts = {
-    critical: myEvents.filter((e) => e.severity === 'critical').length,
-    high: myEvents.filter((e) => e.severity === 'high').length,
-    elevated: myEvents.filter((e) => e.severity === 'elevated').length,
-    monitoring: myEvents.filter((e) => e.severity === 'monitoring').length,
+    critical: myScopedEvents.filter((e) => e.severity === 'critical').length,
+    high: myScopedEvents.filter((e) => e.severity === 'high').length,
+    elevated: myScopedEvents.filter((e) => e.severity === 'elevated').length,
+    monitoring: myScopedEvents.filter((e) => e.severity === 'monitoring').length,
   };
 
   const severityOrder = { critical: 0, high: 1, elevated: 2, monitoring: 3 };
@@ -331,8 +346,8 @@ const LeonaChatScreen = ({ navigation, route }) => {
     [EVENTS]
   );
   const myTopEvents = useMemo(
-    () => [...myEvents].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]).slice(0, 5),
-    [myEvents]
+    () => [...myScopedEvents].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]).slice(0, 5),
+    [myScopedEvents]
   );
   const worldThreatScore = Math.min(100, (
     severityCounts.critical * 20 +
@@ -353,8 +368,10 @@ const LeonaChatScreen = ({ navigation, route }) => {
   }), [EVENTS.length, severityCounts, topEvents]);
   const myBriefContext = useMemo(() => ({
     scope: 'my',
-    aois: USER_AOIS,
-    event_count: myEvents.length,
+    aois: userAois,
+    radius_km: userConfig?.radius || 0,
+    event_types: userConfig?.eventTypes || [],
+    event_count: myScopedEvents.length,
     severity_counts: mySeverityCounts,
     events: myTopEvents.map((event) => ({
       id: event.id,
@@ -362,7 +379,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
       severity: event.severity,
       location: event.location,
     })),
-  }), [USER_AOIS, myEvents.length, mySeverityCounts, myTopEvents]);
+  }), [myScopedEvents.length, mySeverityCounts, myTopEvents, userAois, userConfig?.eventTypes, userConfig?.radius]);
   const { brief: worldBrief, loading: worldBriefLoading } = useLeonaBrief(
     worldBriefContext,
     activeSection === 'BRIEF' && activeBriefTab === 'WORLD'
@@ -374,7 +391,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
   const worldNarrative = extractBriefText(worldBrief)
     || `${EVENTS.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`;
   const myNarrative = extractBriefText(myBrief)
-    || `Active monitoring across ${USER_AOIS.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`;
+    || `Active monitoring across ${userAois.length} Areas of Interest with ${myScopedEvents.length} live events currently matched to your scope.`;
 
   const quickChips = [
     'Critical events',
@@ -540,7 +557,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
       </View>
 
       <View style={styles.aoiTagsRow}>
-        {USER_AOIS.map((aoi, idx) => (
+        {userAois.map((aoi, idx) => (
           <View key={idx} style={styles.aoiTag}>
             <Text style={styles.aoiText}>📍 {aoi}</Text>
           </View>
@@ -560,7 +577,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
         </View>
         <View style={styles.myBriefStatDivider} />
         <View style={styles.myBriefStat}>
-          <Text style={[styles.myBriefStatNum, { color: colors.blue }]}>{USER_AOIS.length}</Text>
+          <Text style={[styles.myBriefStatNum, { color: colors.blue }]}>{userAois.length}</Text>
           <Text style={styles.myBriefStatLabel}>AOIs</Text>
         </View>
       </View>
@@ -571,23 +588,23 @@ const LeonaChatScreen = ({ navigation, route }) => {
         <Text style={styles.narrativeText}>
           {normalizeBriefText(
             myBriefLoading
-              ? `Active monitoring across ${USER_AOIS.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`
+              ? `Active monitoring across ${userAois.length} Areas of Interest with ${myScopedEvents.length} live events currently matched to your scope.`
               : myNarrative
           )}
         </Text>
       </View>
 
       {/* Pinned Events */}
-      {myEvents.filter(e => pinnedEventIds.has(e.id)).length > 0 && (
+      {myScopedEvents.filter(e => pinnedEventIds.has(e.id)).length > 0 && (
         <View style={styles.briefSection}>
           <View style={styles.pinnedHeader}>
             <Text style={styles.pinnedIcon}>📌</Text>
             <Text style={styles.pinnedTitle}>PINNED</Text>
             <View style={styles.pinnedCountBadge}>
-              <Text style={styles.pinnedCountText}>{myEvents.filter(e => pinnedEventIds.has(e.id)).length}</Text>
+              <Text style={styles.pinnedCountText}>{myScopedEvents.filter(e => pinnedEventIds.has(e.id)).length}</Text>
             </View>
           </View>
-          {myEvents.filter(e => pinnedEventIds.has(e.id)).map((event) => (
+          {myScopedEvents.filter(e => pinnedEventIds.has(e.id)).map((event) => (
             <TouchableOpacity
               key={event.id}
               style={styles.briefEventRow}

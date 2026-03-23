@@ -13,6 +13,7 @@ import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents, useAOIs, useLeonaBrief } from '../hooks/useEvents';
 import LeonaHeader from '../components/LeonaHeader';
 import { AppContext } from '../../App';
+import { filterEventsForConfig } from '../lib/locality';
 
 function extractBriefText(brief) {
   if (!brief) return '';
@@ -56,9 +57,18 @@ const BriefsScreen = ({ navigation }) => {
     () => [...new Map([...myEvents, ...worldEvents].map((event) => [event.id, event])).values()],
     [myEvents, worldEvents]
   );
-  const userAois = useMemo(
-    () => aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location || String(aoi)),
-    [aois]
+  const userAois = useMemo(() => {
+    if (Array.isArray(userConfig?.aois) && userConfig.aois.length > 0) {
+      return userConfig.aois;
+    }
+    return aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location || String(aoi));
+  }, [aois, userConfig?.aois]);
+  const myScopedEvents = useMemo(
+    () => limitEventsForProduct(
+      filterEventsForConfig(myEvents.length > 0 ? myEvents : worldEvents, userConfig, 'local'),
+      userConfig?.product
+    ),
+    [myEvents, userConfig, worldEvents]
   );
 
   const severityCounts = {
@@ -68,18 +78,18 @@ const BriefsScreen = ({ navigation }) => {
     monitoring: events.filter((event) => event.severity === 'monitoring').length,
   };
   const mySeverityCounts = {
-    critical: myEvents.filter((event) => event.severity === 'critical').length,
-    high: myEvents.filter((event) => event.severity === 'high').length,
-    elevated: myEvents.filter((event) => event.severity === 'elevated').length,
-    monitoring: myEvents.filter((event) => event.severity === 'monitoring').length,
+    critical: myScopedEvents.filter((event) => event.severity === 'critical').length,
+    high: myScopedEvents.filter((event) => event.severity === 'high').length,
+    elevated: myScopedEvents.filter((event) => event.severity === 'elevated').length,
+    monitoring: myScopedEvents.filter((event) => event.severity === 'monitoring').length,
   };
   const topEvents = useMemo(
     () => [...events].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]).slice(0, 4),
     [events]
   );
   const myTopEvents = useMemo(
-    () => [...myEvents].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]).slice(0, 4),
-    [myEvents]
+    () => [...myScopedEvents].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]).slice(0, 4),
+    [myScopedEvents]
   );
   const countryRiskTarget = useMemo(
     () => deriveCountryRiskTarget(userConfig, aois, myEvents, worldEvents),
@@ -120,7 +130,9 @@ const BriefsScreen = ({ navigation }) => {
   const myBriefContext = useMemo(() => ({
     scope: 'my',
     aois: userAois,
-    event_count: myEvents.length,
+    radius_km: userConfig?.radius || 0,
+    event_types: userConfig?.eventTypes || [],
+    event_count: myScopedEvents.length,
     severity_counts: mySeverityCounts,
     events: myTopEvents.map((event) => ({
       id: event.id,
@@ -128,7 +140,7 @@ const BriefsScreen = ({ navigation }) => {
       severity: event.severity,
       location: event.location,
     })),
-  }), [userAois, myEvents.length, mySeverityCounts, myTopEvents]);
+  }), [myScopedEvents.length, mySeverityCounts, myTopEvents, userAois, userConfig?.eventTypes, userConfig?.radius]);
   const countryBriefContext = useMemo(() => ({
     scope: 'country_risk',
     country: countryRiskTarget,
@@ -175,7 +187,7 @@ const BriefsScreen = ({ navigation }) => {
         requestKey: `brief-chat-${activeTab}-${Date.now()}`,
         initialBriefTab: activeTab,
         initialPrompt: activeTab === 'MY'
-          ? `Give me a concise briefing for my areas of interest: ${userAois.join(', ') || 'my configured AOIs'}. Current matched events: ${myEvents.length}.`
+          ? `Give me a concise briefing for my areas of interest: ${userAois.join(', ') || 'my configured AOIs'}. Current matched events: ${myScopedEvents.length}. Selected event types: ${(userConfig?.eventTypes || []).join(', ') || 'all configured types'}. Radius: ${userConfig?.radius || 0} km.`
           : activeTab === 'COUNTRY'
             ? `Give me a concise country risk briefing for ${countryRiskTarget}. Current matched events: ${countryMatchedEvents.length}. Critical: ${countrySeverityCounts.critical}, High: ${countrySeverityCounts.high}, Elevated: ${countrySeverityCounts.elevated}, Monitoring: ${countrySeverityCounts.monitoring}.`
             : `Give me a concise global risk briefing. Current global event count: ${events.length}. Critical: ${severityCounts.critical}, High: ${severityCounts.high}, Elevated: ${severityCounts.elevated}, Monitoring: ${severityCounts.monitoring}.`,
