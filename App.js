@@ -12,6 +12,7 @@ import { onEventUpdate } from './src/lib/realtime';
 import { addNotificationResponseListener, consumeLastNotificationResponse, getExpoPushToken, initNotifications, notifyRealtimeUpdate } from './src/lib/notifications';
 import { syncPushToken } from './src/lib/pushRegistration';
 import { markAlertViewed } from './src/lib/viewedAlerts';
+import { getStoredSettingsPreferences } from './src/lib/settingsPreferences';
 
 // App context for onboarding completion
 export const AppContext = createContext();
@@ -86,67 +87,107 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
   }, []);
 
   useEffect(() => {
-    if (!isSignedIn) {
-      return;
-    }
+    let cancelled = false;
 
-    if (!authReady) {
-      console.log('[App] userConfig hydrate waiting for authReady');
-      return;
-    }
+    const hydrateUserConfig = async () => {
+      if (!isSignedIn) {
+        return;
+      }
 
-    if (profileLoading || aoisLoading) {
-      return;
-    }
+      if (!authReady) {
+        console.log('[App] userConfig hydrate waiting for authReady');
+        return;
+      }
 
-    const persistedEventTypes = Array.isArray(profile?.preferences?.event_types)
-      ? profile.preferences.event_types
-      : Array.isArray(profile?.preferences?.eventTypes)
-        ? profile.preferences.eventTypes
-        : [];
-    const persistedRadius = profile?.preferences?.radius_km
-      ?? profile?.preferences?.radiusKm
-      ?? aois.find((aoi) => Number(aoi?.radius_km))?.radius_km
-      ?? userConfig?.radius
-      ?? 0;
-    const persistedCriticalOnly = profile?.preferences?.critical_only
-      ?? profile?.preferences?.criticalOnly
-      ?? userConfig?.criticalOnly
-      ?? false;
-    const persistedAois = aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean);
+      if (profileLoading || aoisLoading) {
+        return;
+      }
 
-    if (!persistedAois.length) {
-      console.log('[App] userConfig hydrate skipped: no AOIs available');
-      return;
-    }
+      const localPreferences = await getStoredSettingsPreferences().catch((err) => {
+        console.warn('[App] Local settings preference read failed:', err.message);
+        return {};
+      });
+      const persistedEventTypes = Array.isArray(profile?.preferences?.event_types)
+        ? profile.preferences.event_types
+        : Array.isArray(profile?.preferences?.eventTypes)
+          ? profile.preferences.eventTypes
+          : [];
+      const persistedRadius = profile?.preferences?.radius_km
+        ?? profile?.preferences?.radiusKm
+        ?? aois.find((aoi) => Number(aoi?.radius_km))?.radius_km
+        ?? userConfig?.radius
+        ?? 0;
+      const persistedCriticalOnly = localPreferences?.critical_only
+        ?? localPreferences?.criticalOnly
+        ?? profile?.preferences?.critical_only
+        ?? profile?.preferences?.criticalOnly
+        ?? userConfig?.criticalOnly
+        ?? false;
+      const persistedPushNotifications = localPreferences?.push_notifications
+        ?? localPreferences?.pushNotifications
+        ?? profile?.preferences?.push_notifications
+        ?? profile?.preferences?.pushNotifications
+        ?? userConfig?.pushNotifications
+        ?? true;
+      const persistedSoundVibration = localPreferences?.sound_vibration
+        ?? localPreferences?.soundVibration
+        ?? profile?.preferences?.sound_vibration
+        ?? profile?.preferences?.soundVibration
+        ?? userConfig?.soundVibration
+        ?? true;
+      const persistedAois = aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean);
 
-    console.log('[App] userConfig hydrate source', {
-      persistedEventTypes,
-      persistedRadius,
-      persistedAois,
-      profilePreferences: profile?.preferences || null,
-    });
+      if (!persistedAois.length) {
+        console.log('[App] userConfig hydrate skipped: no AOIs available');
+        return;
+      }
 
-    setUserConfig((prev) => ({
-      ...(prev || {}),
-      location: prev?.location || persistedAois[0],
-      aois: persistedAois,
-      radius: Number(persistedRadius) || 0,
-      eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (prev?.eventTypes || []),
-      criticalOnly: Boolean(persistedCriticalOnly),
-      preferences: {
-        ...(prev?.preferences || {}),
-        ...(profile?.preferences || {}),
-        critical_only: Boolean(persistedCriticalOnly),
-      },
-    }));
-    console.log('[App] userConfig hydrated', {
-      location: persistedAois[0],
-      aois: persistedAois,
-      radius: Number(persistedRadius) || 0,
-      eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (userConfig?.eventTypes || []),
-      criticalOnly: Boolean(persistedCriticalOnly),
-    });
+      console.log('[App] userConfig hydrate source', {
+        persistedEventTypes,
+        persistedRadius,
+        persistedAois,
+        localPreferences,
+        profilePreferences: profile?.preferences || null,
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      setUserConfig((prev) => ({
+        ...(prev || {}),
+        location: prev?.location || persistedAois[0],
+        aois: persistedAois,
+        radius: Number(persistedRadius) || 0,
+        eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (prev?.eventTypes || []),
+        criticalOnly: Boolean(persistedCriticalOnly),
+        pushNotifications: Boolean(persistedPushNotifications),
+        soundVibration: Boolean(persistedSoundVibration),
+        preferences: {
+          ...(prev?.preferences || {}),
+          ...(profile?.preferences || {}),
+          ...localPreferences,
+          critical_only: Boolean(persistedCriticalOnly),
+          push_notifications: Boolean(persistedPushNotifications),
+          sound_vibration: Boolean(persistedSoundVibration),
+        },
+      }));
+      console.log('[App] userConfig hydrated', {
+        location: persistedAois[0],
+        aois: persistedAois,
+        radius: Number(persistedRadius) || 0,
+        eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (userConfig?.eventTypes || []),
+        criticalOnly: Boolean(persistedCriticalOnly),
+        pushNotifications: Boolean(persistedPushNotifications),
+        soundVibration: Boolean(persistedSoundVibration),
+      });
+    };
+
+    hydrateUserConfig();
+
+    return () => {
+      cancelled = true;
+    };
   }, [aois, aoisLoading, authReady, isSignedIn, profile, profileLoading, setOnboardingComplete, setUserConfig, userConfig?.radius]);
 
   useEffect(() => {

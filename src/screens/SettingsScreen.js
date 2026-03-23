@@ -12,6 +12,8 @@ import { colors, spacing } from '../theme';
 import { AppContext } from '../../App';
 import { PRODUCT_CONFIGS, getProductConfig } from '../lib/products';
 import { useAOIs } from '../hooks/useEvents';
+import { updateUserProfile } from '../lib/api';
+import { mergeStoredSettingsPreferences } from '../lib/settingsPreferences';
 
 const SettingsScreen = ({ navigation }) => {
   const { userConfig, setUserConfig } = useContext(AppContext);
@@ -22,10 +24,14 @@ const SettingsScreen = ({ navigation }) => {
     id: aoi?.id,
     name: aoi?.name || aoi?.location_name || aoi?.location || String(aoi),
   })).filter((aoi) => aoi.name);
+  const notifications = useMemo(() => (
+    userConfig?.pushNotifications ?? userConfig?.preferences?.push_notifications ?? true
+  ), [userConfig?.preferences?.push_notifications, userConfig?.pushNotifications]);
   const criticalOnly = useMemo(() => Boolean(userConfig?.criticalOnly), [userConfig?.criticalOnly]);
+  const soundVibration = useMemo(() => (
+    userConfig?.soundVibration ?? userConfig?.preferences?.sound_vibration ?? true
+  ), [userConfig?.preferences?.sound_vibration, userConfig?.soundVibration]);
 
-  const [notifications, setNotifications] = useState(true);
-  const [soundVibration, setSoundVibration] = useState(true);
   const [emailDigest, setEmailDigest] = useState(false);
   const [showMarkers, setShowMarkers] = useState(true);
   const [showRiskZones, setShowRiskZones] = useState(true);
@@ -43,15 +49,37 @@ const SettingsScreen = ({ navigation }) => {
     }));
   };
 
-  const handleCriticalOnlyToggle = (value) => {
+  const persistNotificationPreferences = async (patch) => {
+    await mergeStoredSettingsPreferences(patch).catch((err) => {
+      console.warn('[Settings] Local preference persist failed:', err.message);
+    });
+    await updateUserProfile({ preferences: patch }).catch((err) => {
+      console.warn('[Settings] Profile preference persist failed:', err.message);
+    });
+  };
+
+  const handleNotificationToggle = (key, storageKey, value) => {
     setUserConfig((prev) => ({
       ...(prev || {}),
-      criticalOnly: value,
+      [key]: value,
       preferences: {
         ...(prev?.preferences || {}),
-        critical_only: value,
+        [storageKey]: value,
       },
     }));
+    persistNotificationPreferences({ [storageKey]: value });
+  };
+
+  const handlePushNotificationsToggle = (value) => {
+    handleNotificationToggle('pushNotifications', 'push_notifications', value);
+  };
+
+  const handleCriticalOnlyToggle = (value) => {
+    handleNotificationToggle('criticalOnly', 'critical_only', value);
+  };
+
+  const handleSoundVibrationToggle = (value) => {
+    handleNotificationToggle('soundVibration', 'sound_vibration', value);
   };
 
   return (
@@ -71,9 +99,9 @@ const SettingsScreen = ({ navigation }) => {
       >
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>NOTIFICATIONS</Text>
-          <SettingRow label="Push Notifications" value={notifications} onToggle={setNotifications} />
+          <SettingRow label="Push Notifications" value={notifications} onToggle={handlePushNotificationsToggle} />
           <SettingRow label="Critical Alerts Only" value={criticalOnly} onToggle={handleCriticalOnlyToggle} />
-          <SettingRow label="Sound & Vibration" value={soundVibration} onToggle={setSoundVibration} />
+          <SettingRow label="Sound & Vibration" value={soundVibration} onToggle={handleSoundVibrationToggle} />
           <SettingRow label="Email Digest" value={emailDigest} onToggle={setEmailDigest} />
         </View>
 
