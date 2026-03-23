@@ -392,6 +392,49 @@ const LeonaChatScreen = ({ navigation, route }) => {
     || `${EVENTS.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`;
   const myNarrative = extractBriefText(myBrief)
     || `Active monitoring across ${userAois.length} Areas of Interest with ${myScopedEvents.length} live events currently matched to your scope.`;
+  const chatContext = useMemo(() => ({
+    scope: 'local_aoi',
+    aois: userAois,
+    radius_km: userConfig?.radius || 0,
+    event_types: userConfig?.eventTypes || [],
+    current_view: {
+      section: activeSection,
+      brief_tab: activeBriefTab,
+    },
+    event_summary: {
+      local_event_count: myScopedEvents.length,
+      global_event_count: EVENTS.length,
+      local_severity_counts: mySeverityCounts,
+      global_severity_counts: severityCounts,
+    },
+    current_events: myTopEvents.map((event) => ({
+      id: event.id,
+      title: event.title,
+      type: event.type,
+      severity: event.severity,
+      location: event.location,
+    })),
+  }), [
+    EVENTS.length,
+    activeBriefTab,
+    activeSection,
+    myScopedEvents.length,
+    mySeverityCounts,
+    myTopEvents,
+    severityCounts,
+    userAois,
+    userConfig?.eventTypes,
+    userConfig?.radius,
+  ]);
+  const sendChatWithContext = useCallback((text, options = {}) => (
+    sendChat(text, {
+      ...options,
+      context: {
+        ...chatContext,
+        ...(options.context || {}),
+      },
+    })
+  ), [chatContext, sendChat]);
 
   const quickChips = [
     'Critical events',
@@ -410,13 +453,13 @@ const LeonaChatScreen = ({ navigation, route }) => {
 
   const handleChipPress = (chipText) => {
     if (sending) return;
-    sendChat(chipText);
+    sendChatWithContext(chipText);
   };
 
   const handleSend = () => {
     if (sending) return;
     if (inputText.trim()) {
-      sendChat(inputText.trim());
+      sendChatWithContext(inputText.trim());
       setInputText('');
     }
   };
@@ -453,7 +496,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
         console.log('[LeonaChatScreen] event-analysis:dispatch', {
           requestKey,
         });
-        sendChat(initialPrompt, {
+        sendChatWithContext(initialPrompt, {
           requestKind: 'event-analysis',
           pendingText: 'LEONA is analyzing this event. Pulling current signals, impact context, and recommended actions...',
           failureText: 'LEONA could not finish the event analysis in time. Please retry from the event or ask a shorter follow-up question.',
@@ -473,7 +516,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
       route?.params?.initialPrompt,
       route?.params?.initialSection,
       route?.params?.requestKey,
-      sendChat,
+      sendChatWithContext,
     ])
   );
 

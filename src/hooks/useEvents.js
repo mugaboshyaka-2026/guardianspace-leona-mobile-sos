@@ -59,6 +59,19 @@ function updateLeonaChat(partial) {
   emitLeonaChat();
 }
 
+function buildLeonaContextMessage(context) {
+  if (!context) {
+    return null;
+  }
+
+  const serialized = JSON.stringify(context);
+  if (!serialized || serialized === '{}') {
+    return null;
+  }
+
+  return `Current user context: ${serialized}`;
+}
+
 export function resetEventCache() {
   cache.myEvents = null;
   cache.worldEvents = null;
@@ -391,8 +404,20 @@ export function useLeonaChat() {
           role: m.type === 'agent' ? 'assistant' : 'user',
           content: m.text,
         }));
+      const contextMessage = buildLeonaContextMessage(options.context);
+      const requestMessages = contextMessage
+        ? apiMessages.map((message, index) => {
+            if (index !== apiMessages.length - 1 || message.role !== 'user') {
+              return message;
+            }
+            return {
+              ...message,
+              content: `${contextMessage}\n\nUser request: ${message.content}`,
+            };
+          })
+        : apiMessages;
 
-      const data = await sendLeonaMessage(apiMessages);
+      const data = await sendLeonaMessage(requestMessages);
       const reply = data.message || data.reply || data.content || 'Processing your request...';
       console.log('[useLeonaChat] send:success', {
         requestKind: options.requestKind || 'generic',
