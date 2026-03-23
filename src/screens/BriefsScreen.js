@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useContext, useMemo, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -7,10 +7,12 @@ import {
   ScrollView,
   TouchableOpacity,
   FlatList,
+  ActivityIndicator,
 } from 'react-native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { useMyEvents, useWorldEvents, useAOIs, useLeonaBrief } from '../hooks/useEvents';
 import LeonaHeader from '../components/LeonaHeader';
+import { AppContext } from '../../App';
 
 function extractBriefText(brief) {
   if (!brief) return '';
@@ -32,7 +34,20 @@ function normalizeBriefText(text = '') {
 
 const severityOrder = { critical: 0, high: 1, elevated: 2, monitoring: 3 };
 
+function deriveCountryRiskTarget(userConfig, aois, myEvents, worldEvents) {
+  return (
+    userConfig?.location
+    || aois.find((aoi) => aoi?.name || aoi?.location_name || aoi?.location)?.name
+    || aois.find((aoi) => aoi?.name || aoi?.location_name || aoi?.location)?.location_name
+    || aois.find((aoi) => aoi?.name || aoi?.location_name || aoi?.location)?.location
+    || myEvents.find((event) => event?.location)?.location
+    || worldEvents.find((event) => event?.location)?.location
+    || 'your primary area'
+  );
+}
+
 const BriefsScreen = ({ navigation }) => {
+  const { userConfig } = useContext(AppContext);
   const [activeTab, setActiveTab] = useState('WORLD');
   const { events: myEvents } = useMyEvents();
   const { events: worldEvents } = useWorldEvents();
@@ -41,7 +56,10 @@ const BriefsScreen = ({ navigation }) => {
     () => [...new Map([...myEvents, ...worldEvents].map((event) => [event.id, event])).values()],
     [myEvents, worldEvents]
   );
-  const userAois = useMemo(() => aois.map((aoi) => aoi.name || aoi), [aois]);
+  const userAois = useMemo(
+    () => aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location || String(aoi)),
+    [aois]
+  );
 
   const severityCounts = {
     critical: events.filter((event) => event.severity === 'critical').length,
@@ -63,6 +81,23 @@ const BriefsScreen = ({ navigation }) => {
     () => [...myEvents].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]).slice(0, 4),
     [myEvents]
   );
+  const countryRiskTarget = useMemo(
+    () => deriveCountryRiskTarget(userConfig, aois, myEvents, worldEvents),
+    [aois, myEvents, userConfig, worldEvents]
+  );
+  const countryMatchedEvents = useMemo(
+    () => [...myEvents, ...worldEvents]
+      .filter((event) => (event?.location || '').toLowerCase().includes(countryRiskTarget.toLowerCase()))
+      .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]),
+    [countryRiskTarget, myEvents, worldEvents]
+  );
+  const countrySeverityCounts = useMemo(() => ({
+    critical: countryMatchedEvents.filter((event) => event.severity === 'critical').length,
+    high: countryMatchedEvents.filter((event) => event.severity === 'high').length,
+    elevated: countryMatchedEvents.filter((event) => event.severity === 'elevated').length,
+    monitoring: countryMatchedEvents.filter((event) => event.severity === 'monitoring').length,
+  }), [countryMatchedEvents]);
+  const countryEvents = useMemo(() => countryMatchedEvents.slice(0, 4), [countryMatchedEvents]);
   const worldThreatScore = Math.min(
     100,
     severityCounts.critical * 20 +
@@ -94,13 +129,42 @@ const BriefsScreen = ({ navigation }) => {
       location: event.location,
     })),
   }), [userAois, myEvents.length, mySeverityCounts, myTopEvents]);
-  const { brief: worldBrief, loading: worldBriefLoading } = useLeonaBrief(worldBriefContext, activeTab === 'WORLD');
-  const { brief: myBrief, loading: myBriefLoading } = useLeonaBrief(myBriefContext, activeTab === 'MY');
+  const countryBriefContext = useMemo(() => ({
+    scope: 'country_risk',
+    country: countryRiskTarget,
+    aois: userAois,
+    event_count: countryMatchedEvents.length,
+    severity_counts: countrySeverityCounts,
+    events: countryEvents.map((event) => ({
+      id: event.id,
+      title: event.title,
+      severity: event.severity,
+      location: event.location,
+    })),
+  }), [countryEvents, countryMatchedEvents.length, countryRiskTarget, countrySeverityCounts, userAois]);
+  const {
+    brief: worldBrief,
+    loading: worldBriefLoading,
+    error: worldBriefError,
+    refresh: refreshWorldBrief,
+  } = useLeonaBrief(worldBriefContext, activeTab === 'WORLD');
+  const {
+    brief: myBrief,
+    loading: myBriefLoading,
+    error: myBriefError,
+    refresh: refreshMyBrief,
+  } = useLeonaBrief(myBriefContext, activeTab === 'MY');
+  const {
+    brief: countryBrief,
+    loading: countryBriefLoading,
+    error: countryBriefError,
+    refresh: refreshCountryBrief,
+  } = useLeonaBrief(countryBriefContext, activeTab === 'COUNTRY');
 
   const tabs = [
     { label: 'WORLD BRIEF', value: 'WORLD' },
     { label: 'MY BRIEF', value: 'MY' },
-    { label: 'CHAT', value: 'CHAT' },
+    { label: 'COUNTRY RISK', value: 'COUNTRY' },
   ];
 
   const handleChatPress = () => {
@@ -109,12 +173,52 @@ const BriefsScreen = ({ navigation }) => {
       params: {
         initialSection: 'CHAT',
         requestKey: `brief-chat-${activeTab}-${Date.now()}`,
+        initialBriefTab: activeTab,
         initialPrompt: activeTab === 'MY'
           ? `Give me a concise briefing for my areas of interest: ${userAois.join(', ') || 'my configured AOIs'}. Current matched events: ${myEvents.length}.`
-          : `Give me a concise global risk briefing. Current global event count: ${events.length}. Critical: ${severityCounts.critical}, High: ${severityCounts.high}, Elevated: ${severityCounts.elevated}, Monitoring: ${severityCounts.monitoring}.`,
+          : activeTab === 'COUNTRY'
+            ? `Give me a concise country risk briefing for ${countryRiskTarget}. Current matched events: ${countryMatchedEvents.length}. Critical: ${countrySeverityCounts.critical}, High: ${countrySeverityCounts.high}, Elevated: ${countrySeverityCounts.elevated}, Monitoring: ${countrySeverityCounts.monitoring}.`
+            : `Give me a concise global risk briefing. Current global event count: ${events.length}. Critical: ${severityCounts.critical}, High: ${severityCounts.high}, Elevated: ${severityCounts.elevated}, Monitoring: ${severityCounts.monitoring}.`,
       },
     });
   };
+
+  const renderAiBriefCard = ({ title, loading, error, text, onRetry }) => (
+    <View style={styles.summaryCard}>
+      <View style={styles.aiHeader}>
+        <Text style={styles.summaryCardTitle}>{title}</Text>
+        <TouchableOpacity onPress={onRetry} disabled={loading}>
+          <Text style={[styles.retryText, loading && styles.retryTextDisabled]}>REFRESH</Text>
+        </TouchableOpacity>
+      </View>
+
+      {loading && (
+        <View style={styles.aiState}>
+          <ActivityIndicator color={colors.blue} />
+          <Text style={styles.aiStateText}>LEONA is generating this brief...</Text>
+        </View>
+      )}
+
+      {!loading && error && (
+        <View style={styles.aiState}>
+          <Text style={styles.errorText}>AI brief unavailable right now.</Text>
+          <TouchableOpacity onPress={onRetry}>
+            <Text style={styles.retryLink}>Try again</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {!loading && !error && text ? (
+        <Text style={styles.briefNarrativeText}>{normalizeBriefText(text)}</Text>
+      ) : null}
+
+      {!loading && !error && !text && (
+        <View style={styles.aiState}>
+          <Text style={styles.emptyCopy}>No AI brief content was returned for this selection.</Text>
+        </View>
+      )}
+    </View>
+  );
 
   const renderSeverityChip = (severity, count) => {
     const severityColor = sevColors[severity];
@@ -172,14 +276,15 @@ const BriefsScreen = ({ navigation }) => {
         <View style={styles.threatBar}>
           <View style={[styles.threatBarFill, { width: `${worldThreatScore}%` }]} />
         </View>
-        <Text style={styles.briefNarrativeText}>
-          {normalizeBriefText(
-            worldBriefLoading
-              ? `${events.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`
-              : extractBriefText(worldBrief) || `${events.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`
-          )}
-        </Text>
       </View>
+
+      {renderAiBriefCard({
+        title: 'AI WORLD BRIEF',
+        loading: worldBriefLoading,
+        error: worldBriefError,
+        text: extractBriefText(worldBrief),
+        onRetry: refreshWorldBrief,
+      })}
 
       <View style={{ height: 40 }} />
     </ScrollView>
@@ -201,15 +306,13 @@ const BriefsScreen = ({ navigation }) => {
           ))}
         </View>
 
-        <View style={styles.narrativeCard}>
-          <Text style={styles.briefNarrativeText}>
-            {normalizeBriefText(
-              myBriefLoading
-                ? `Active monitoring across ${userAois.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`
-                : extractBriefText(myBrief) || `Active monitoring across ${userAois.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`
-            )}
-          </Text>
-        </View>
+        {renderAiBriefCard({
+          title: 'AI MY BRIEF',
+          loading: myBriefLoading,
+          error: myBriefError,
+          text: extractBriefText(myBrief),
+          onRetry: refreshMyBrief,
+        })}
 
         <View style={styles.briefStats}>
           <View style={styles.briefStat}>
@@ -239,7 +342,52 @@ const BriefsScreen = ({ navigation }) => {
         </View>
 
         <TouchableOpacity style={styles.footerLink} onPress={handleChatPress}>
-          <Text style={styles.footerLinkText}>Ask LEONA for a full brief →</Text>
+          <Text style={styles.footerLinkText}>Ask LEONA for a full brief -></Text>
+        </TouchableOpacity>
+      </View>
+      <View style={{ height: 40 }} />
+    </ScrollView>
+  );
+
+  const renderCountryBrief = () => (
+    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.briefContainer}>
+        <View style={styles.briefHeader}>
+          <View style={styles.blueBorderLeft} />
+          <Text style={styles.briefTitle}>COUNTRY RISK</Text>
+        </View>
+
+        <Text style={styles.sectionSubtitle}>Current focus: {countryRiskTarget}</Text>
+
+        <View style={styles.severityGrid}>
+          {renderSeverityChip('critical', countrySeverityCounts.critical)}
+          {renderSeverityChip('high', countrySeverityCounts.high)}
+          {renderSeverityChip('elevated', countrySeverityCounts.elevated)}
+          {renderSeverityChip('monitoring', countrySeverityCounts.monitoring)}
+        </View>
+
+        {renderAiBriefCard({
+          title: 'AI COUNTRY RISK BRIEF',
+          loading: countryBriefLoading,
+          error: countryBriefError,
+          text: extractBriefText(countryBrief),
+          onRetry: refreshCountryBrief,
+        })}
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>COUNTRY EVENTS</Text>
+          <FlatList
+            scrollEnabled={false}
+            data={countryEvents}
+            renderItem={renderEventRow}
+            keyExtractor={(item) => item.id}
+            ItemSeparatorComponent={() => <View style={styles.eventSeparator} />}
+            ListEmptyComponent={() => <Text style={styles.emptyCopy}>No live events matched this country context.</Text>}
+          />
+        </View>
+
+        <TouchableOpacity style={styles.footerLink} onPress={handleChatPress}>
+          <Text style={styles.footerLinkText}>Ask LEONA for a full brief -></Text>
         </TouchableOpacity>
       </View>
       <View style={{ height: 40 }} />
@@ -268,13 +416,7 @@ const BriefsScreen = ({ navigation }) => {
           <TouchableOpacity
             key={tab.value}
             style={[styles.tabButton, activeTab === tab.value && styles.tabButtonActive]}
-            onPress={() => {
-              if (tab.value === 'CHAT') {
-                handleChatPress();
-              } else {
-                setActiveTab(tab.value);
-              }
-            }}
+            onPress={() => setActiveTab(tab.value)}
           >
             <Text style={[styles.tabLabel, activeTab === tab.value && styles.tabLabelActive]}>{tab.label}</Text>
             {activeTab === tab.value && <View style={styles.tabUnderline} />}
@@ -284,6 +426,7 @@ const BriefsScreen = ({ navigation }) => {
 
       {activeTab === 'WORLD' && renderWorldBrief()}
       {activeTab === 'MY' && renderMyBrief()}
+      {activeTab === 'COUNTRY' && renderCountryBrief()}
     </SafeAreaView>
   );
 };
@@ -441,7 +584,41 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1,
+  },
+  aiHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: spacing.md,
+  },
+  aiState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.lg,
+  },
+  aiStateText: {
+    color: colors.textSec,
+    fontSize: 12,
+  },
+  errorText: {
+    color: colors.critical,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  retryText: {
+    color: colors.blue,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  retryTextDisabled: {
+    color: colors.textDim,
+  },
+  retryLink: {
+    color: colors.blue,
+    fontSize: 13,
+    fontWeight: '600',
   },
   threatRow: {
     flexDirection: 'row',

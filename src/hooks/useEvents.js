@@ -436,20 +436,24 @@ export function useLeonaChat() {
 export function useLeonaBrief(context, enabled = true) {
   const [brief, setBrief] = useState(null);
   const [loading, setLoading] = useState(enabled);
+  const [error, setError] = useState(null);
   const contextKey = JSON.stringify(context ?? null);
 
   const refresh = useCallback(async () => {
     if (!enabled) {
       setLoading(false);
+      setError(null);
       return;
     }
     setLoading(true);
+    setError(null);
     try {
       const data = await getLeonaBrief(context);
       setBrief(data);
     } catch (err) {
       console.warn('[useLeonaBrief] API failed:', err.message);
       setBrief(null);
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -457,5 +461,5 @@ export function useLeonaBrief(context, enabled = true) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  return { brief, loading, refresh };
+  return { brief, loading, error, refresh };
 }
