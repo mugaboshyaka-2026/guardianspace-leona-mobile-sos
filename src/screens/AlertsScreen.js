@@ -121,7 +121,12 @@ const AlertsScreen = ({ navigation, route }) => {
   const currentEvents = activeTab === 'MY' ? filteredMyAlerts
     : activeTab === 'GLOBAL' ? globalEvents
     : []; // FAVORITES uses its own list
-  const orderedEvents = useMemo(() => sortEventsNewestFirst(currentEvents), [currentEvents]);
+  const severityFilteredEvents = useMemo(() => (
+    userConfig?.criticalOnly
+      ? currentEvents.filter((event) => event?.severity === 'critical')
+      : currentEvents
+  ), [currentEvents, userConfig?.criticalOnly]);
+  const orderedEvents = useMemo(() => sortEventsNewestFirst(severityFilteredEvents), [severityFilteredEvents]);
   const viewedIds = useMemo(() => new Set(Object.keys(viewedAlerts || {})), [viewedAlerts]);
   const activeEvents = useMemo(() => {
     if (activeTab !== 'MY') {
@@ -157,6 +162,7 @@ const AlertsScreen = ({ navigation, route }) => {
       configuredEventTypes: userConfig?.eventTypes || [],
       configuredRadius: userConfig?.radius || null,
       configuredAois: userConfig?.aois || [],
+      criticalOnly: Boolean(userConfig?.criticalOnly),
       sourceMyAlertsCount: myAlerts.length,
       sourceWorldEventsCount: worldEvents.length,
       filteredMyAlertsCount: filteredMyAlerts.length,

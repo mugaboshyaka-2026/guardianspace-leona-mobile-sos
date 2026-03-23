@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -22,9 +22,9 @@ const SettingsScreen = ({ navigation }) => {
     id: aoi?.id,
     name: aoi?.name || aoi?.location_name || aoi?.location || String(aoi),
   })).filter((aoi) => aoi.name);
+  const criticalOnly = useMemo(() => Boolean(userConfig?.criticalOnly), [userConfig?.criticalOnly]);
 
   const [notifications, setNotifications] = useState(true);
-  const [criticalOnly, setCriticalOnly] = useState(false);
   const [soundVibration, setSoundVibration] = useState(true);
   const [emailDigest, setEmailDigest] = useState(false);
   const [showMarkers, setShowMarkers] = useState(true);
@@ -40,6 +40,17 @@ const SettingsScreen = ({ navigation }) => {
     setUserConfig((prev) => ({
       ...(prev || {}),
       product: planId,
+    }));
+  };
+
+  const handleCriticalOnlyToggle = (value) => {
+    setUserConfig((prev) => ({
+      ...(prev || {}),
+      criticalOnly: value,
+      preferences: {
+        ...(prev?.preferences || {}),
+        critical_only: value,
+      },
     }));
   };
 
@@ -61,7 +72,7 @@ const SettingsScreen = ({ navigation }) => {
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>NOTIFICATIONS</Text>
           <SettingRow label="Push Notifications" value={notifications} onToggle={setNotifications} />
-          <SettingRow label="Critical Alerts Only" value={criticalOnly} onToggle={setCriticalOnly} />
+          <SettingRow label="Critical Alerts Only" value={criticalOnly} onToggle={handleCriticalOnlyToggle} />
           <SettingRow label="Sound & Vibration" value={soundVibration} onToggle={setSoundVibration} />
           <SettingRow label="Email Digest" value={emailDigest} onToggle={setEmailDigest} />
         </View>

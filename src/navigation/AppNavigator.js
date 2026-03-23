@@ -188,7 +188,15 @@ export const AppNavigator = () => {
     ),
     [myEvents, userConfig, worldEvents]
   );
-  const alertsBadge = filteredMyEvents.length > 0 ? filteredMyEvents.length : undefined;
+  const badgeEvents = useMemo(
+    () => (
+      userConfig?.criticalOnly
+        ? filteredMyEvents.filter((event) => event?.severity === 'critical')
+        : filteredMyEvents
+    ),
+    [filteredMyEvents, userConfig?.criticalOnly]
+  );
+  const alertsBadge = badgeEvents.length > 0 ? badgeEvents.length : undefined;
 
   return (
     <Tab.Navigator

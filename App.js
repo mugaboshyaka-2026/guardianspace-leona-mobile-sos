@@ -109,6 +109,10 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       ?? aois.find((aoi) => Number(aoi?.radius_km))?.radius_km
       ?? userConfig?.radius
       ?? 0;
+    const persistedCriticalOnly = profile?.preferences?.critical_only
+      ?? profile?.preferences?.criticalOnly
+      ?? userConfig?.criticalOnly
+      ?? false;
     const persistedAois = aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean);
 
     if (!persistedAois.length) {
@@ -129,13 +133,19 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       aois: persistedAois,
       radius: Number(persistedRadius) || 0,
       eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (prev?.eventTypes || []),
-      preferences: profile?.preferences || prev?.preferences || {},
+      criticalOnly: Boolean(persistedCriticalOnly),
+      preferences: {
+        ...(prev?.preferences || {}),
+        ...(profile?.preferences || {}),
+        critical_only: Boolean(persistedCriticalOnly),
+      },
     }));
     console.log('[App] userConfig hydrated', {
       location: persistedAois[0],
       aois: persistedAois,
       radius: Number(persistedRadius) || 0,
       eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (userConfig?.eventTypes || []),
+      criticalOnly: Boolean(persistedCriticalOnly),
     });
   }, [aois, aoisLoading, authReady, isSignedIn, profile, profileLoading, setOnboardingComplete, setUserConfig, userConfig?.radius]);
 
