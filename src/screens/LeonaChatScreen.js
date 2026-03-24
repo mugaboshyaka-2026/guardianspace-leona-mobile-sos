@@ -926,7 +926,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
           {/* LEONA info */}
           <View style={styles.videoCallerInfo}>
             <Text style={styles.videoCallerName}>LEONA</Text>
-            <Text style={styles.videoCallerStatus}>Secure video · End-to-end encrypted</Text>
+            <Text style={styles.videoCallerStatus}>Video preview · Session opens in Tavus</Text>
           </View>
 
           {/* Self-view (picture-in-picture) */}

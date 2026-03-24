@@ -257,6 +257,7 @@ const CallScreen = ({ navigation, route }) => {
       : conversationUrl
         ? 'Live video ready'
         : statusText;
+  const connectionBadgeLabel = isVideo ? 'SESSION READY' : 'CALL UI PREVIEW';
 
   return (
     <View style={styles.root}>
@@ -327,16 +328,16 @@ const CallScreen = ({ navigation, route }) => {
           )}
           {isVideo && (
             <View style={styles.micInfoCard}>
-              <Text style={styles.micInfoTitle}>Microphone routing</Text>
+              <Text style={styles.micInfoTitle}>Video session handoff</Text>
               <Text style={styles.micInfoBody}>
-                Your microphone audio is captured inside the Tavus call and sent there to LEONA.
+                This screen launches the external Tavus session. Security and media handling depend on that live session, not this placeholder UI.
               </Text>
             </View>
           )}
           {connected && (
             <View style={styles.connectedBadge}>
               <View style={styles.connectedDot} />
-              <Text style={styles.connectedText}>ENCRYPTED</Text>
+              <Text style={styles.connectedText}>{connectionBadgeLabel}</Text>
             </View>
           )}
         </View>
