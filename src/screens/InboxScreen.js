@@ -9,8 +9,11 @@ import {
   TouchableOpacity,
   FlatList,
   Modal,
+  Alert,
 } from 'react-native';
 import { colors, spacing } from '../theme';
+
+const MAX_COMPOSE_MESSAGE_LENGTH = 1000;
 
 const InboxScreen = ({ navigation }) => {
   const [activeTab, setActiveTab] = useState('ALL');
@@ -18,6 +21,7 @@ const InboxScreen = ({ navigation }) => {
   const [showCompose, setShowCompose] = useState(false);
   const [composeRecipient, setComposeRecipient] = useState('');
   const [composeMessage, setComposeMessage] = useState('');
+  const [composeError, setComposeError] = useState('');
   const [threads, setThreads] = useState([]);
 
   const suggestedContacts = [
@@ -30,6 +34,14 @@ const InboxScreen = ({ navigation }) => {
 
   const handleSendMessage = () => {
     if (!composeRecipient.trim() || !composeMessage.trim()) {
+      setComposeError('Recipient and message are required.');
+      return;
+    }
+
+    if (composeMessage.length > MAX_COMPOSE_MESSAGE_LENGTH) {
+      const message = `Messages must be ${MAX_COMPOSE_MESSAGE_LENGTH} characters or fewer.`;
+      setComposeError(message);
+      Alert.alert('Message too long', message);
       return;
     }
 
@@ -48,6 +60,7 @@ const InboxScreen = ({ navigation }) => {
     setShowCompose(false);
     setComposeRecipient('');
     setComposeMessage('');
+    setComposeError('');
   };
 
   const tabs = ['ALL', 'DMs', 'CHANNELS', 'SYSTEM'];
@@ -127,7 +140,13 @@ const InboxScreen = ({ navigation }) => {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>INBOX</Text>
-        <TouchableOpacity style={styles.composeButton} onPress={() => setShowCompose(true)}>
+        <TouchableOpacity
+          style={styles.composeButton}
+          onPress={() => {
+            setComposeError('');
+            setShowCompose(true);
+          }}
+        >
           <Text style={styles.composeIcon}>✎</Text>
         </TouchableOpacity>
       </View>
@@ -218,14 +237,20 @@ const InboxScreen = ({ navigation }) => {
         visible={showCompose}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowCompose(false)}
+        onRequestClose={() => {
+          setComposeError('');
+          setShowCompose(false);
+        }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.composeModal}>
             {/* Header */}
             <View style={styles.composeHeader}>
               <Text style={styles.composeTitle}>NEW MESSAGE</Text>
-              <TouchableOpacity onPress={() => setShowCompose(false)}>
+              <TouchableOpacity onPress={() => {
+                setComposeError('');
+                setShowCompose(false);
+              }}>
                 <Text style={styles.closeButton}>✕</Text>
               </TouchableOpacity>
             </View>
@@ -238,7 +263,12 @@ const InboxScreen = ({ navigation }) => {
                 placeholder="Select recipient..."
                 placeholderTextColor={colors.textDim}
                 value={composeRecipient}
-                onChangeText={setComposeRecipient}
+                onChangeText={(value) => {
+                  if (composeError) {
+                    setComposeError('');
+                  }
+                  setComposeRecipient(value);
+                }}
               />
               {/* Suggested Contacts */}
               <View style={styles.suggestedChips}>
@@ -246,7 +276,12 @@ const InboxScreen = ({ navigation }) => {
                   <TouchableOpacity
                     key={contact}
                     style={styles.contactChip}
-                    onPress={() => setComposeRecipient(contact)}
+                    onPress={() => {
+                      if (composeError) {
+                        setComposeError('');
+                      }
+                      setComposeRecipient(contact);
+                    }}
                   >
                     <Text style={styles.contactChipText}>{contact}</Text>
                   </TouchableOpacity>
@@ -262,16 +297,33 @@ const InboxScreen = ({ navigation }) => {
                 placeholder="Type your message..."
                 placeholderTextColor={colors.textDim}
                 value={composeMessage}
-                onChangeText={setComposeMessage}
+                onChangeText={(value) => {
+                  if (composeError) {
+                    setComposeError('');
+                  }
+                  setComposeMessage(value);
+                }}
                 multiline
                 textAlignVertical="top"
+                maxLength={MAX_COMPOSE_MESSAGE_LENGTH}
               />
+              <View style={styles.composeMetaRow}>
+                <Text style={styles.composeMetaText}>
+                  {composeMessage.length}/{MAX_COMPOSE_MESSAGE_LENGTH}
+                </Text>
+              </View>
             </View>
+
+            {composeError ? <Text style={styles.composeErrorText}>{composeError}</Text> : null}
 
             {/* Send Button */}
             <TouchableOpacity
-              style={styles.sendButton}
+              style={[
+                styles.sendButton,
+                (!composeRecipient.trim() || !composeMessage.trim()) && styles.sendButtonDisabled,
+              ]}
               onPress={handleSendMessage}
+              disabled={!composeRecipient.trim() || !composeMessage.trim()}
             >
               <Text style={styles.sendButtonText}>SEND</Text>
             </TouchableOpacity>
@@ -528,6 +580,21 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 120,
   },
+  composeMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: -4,
+    marginBottom: spacing.xs,
+  },
+  composeMetaText: {
+    color: colors.textDim,
+    fontSize: 11,
+  },
+  composeErrorText: {
+    color: colors.critical,
+    fontSize: 12,
+    marginTop: spacing.sm,
+  },
   suggestedChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -552,6 +619,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     marginTop: spacing.lg,
+  },
+  sendButtonDisabled: {
+    opacity: 0.55,
   },
   sendButtonText: {
     color: colors.bg,
