@@ -13,7 +13,7 @@ import BottomSheet from '@gorhom/bottom-sheet';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { isAccessDeniedError, useAOIs, useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
-import { isTimeoutError } from '../lib/api';
+import { fetchNewsRegional, isTimeoutError } from '../lib/api';
 import { deriveLocalRegion, filterEventsForConfig } from '../lib/locality';
 import { getProductConfig, limitEventsForProduct } from '../lib/products';
 import { getRealtimeStatus, onRealtimeStatusChange, retryRealtime } from '../lib/realtime';
@@ -56,6 +56,9 @@ const MapHomeScreen = ({ navigation }) => {
   const [searchText, setSearchText] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState(getRealtimeStatus());
+  const [newsItems, setNewsItems] = useState([]);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [newsError, setNewsError] = useState(null);
   const [layerStates, setLayerStates] = useState({
     wildfire: true,
     flood: true,
@@ -151,12 +154,11 @@ const MapHomeScreen = ({ navigation }) => {
   }, [normalizedSearchText, searchText, searchedEvents]);
 
   const filteredEvents = useMemo(() => {
-    if (activeTab === 'COMMUNITY' && !productConfig.canUseCommunity) return [];
-    if (activeTab === 'NEWS') return searchedEvents.slice(0, 5);
-    if (activeTab === 'COMMUNITY') return searchedEvents.slice(0, 3);
+    if (activeTab === 'NEWS' || activeTab === 'COMMUNITY') return [];
     return searchedEvents;
   }, [activeTab, productConfig.canUseCommunity, searchedEvents]);
   const showMyDataUnavailableState = myDataUnavailable && (mapScope === 'LOCAL' || activeTab === 'MY_ALERTS');
+  const showBottomSheetMyDataUnavailable = activeTab === 'MY_ALERTS' && showMyDataUnavailableState;
 
   useEffect(() => {
     setLayerStates((prev) => {
@@ -190,6 +192,47 @@ const MapHomeScreen = ({ navigation }) => {
     const region = searchRegion || (mapScope === 'LOCAL' ? localRegion : GLOBAL_REGION);
     mapRef.current?.animateToRegion?.(region, 600);
   }, [localRegion, mapScope, searchRegion]);
+
+  useEffect(() => {
+    if (activeTab !== 'NEWS') {
+      return;
+    }
+
+    let cancelled = false;
+    setNewsLoading(true);
+    setNewsError(null);
+
+    fetchNewsRegional()
+      .then((data) => {
+        if (cancelled) {
+          return;
+        }
+        const nextArticles = Array.isArray(data?.articles)
+          ? data.articles
+          : Array.isArray(data?.news)
+            ? data.news
+            : Array.isArray(data)
+              ? data
+              : [];
+        setNewsItems(nextArticles);
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
+        }
+        setNewsItems([]);
+        setNewsError(err);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setNewsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
 
   const handleMarkerPress = (event) => navigation.navigate('EventDetail', { event });
   const handleCardPress = (event) => navigation.navigate('EventDetail', { event });
@@ -498,11 +541,49 @@ const MapHomeScreen = ({ navigation }) => {
           </View>
 
           <View style={styles.cardsContainer}>
-            {showMyDataUnavailableState ? (
+            {showBottomSheetMyDataUnavailable ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyStateTitle}>Sign in required</Text>
                 <Text style={styles.emptyStateText}>
                   This screen is not showing fallback My Alert data while you are signed out.
+                </Text>
+              </View>
+            ) : activeTab === 'NEWS' ? (
+              newsLoading ? (
+                <ActivityIndicator color={colors.blue} style={styles.bottomSheetLoader} />
+              ) : newsError ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateTitle}>{isTimeoutError(newsError) ? 'Request timed out' : 'News unavailable'}</Text>
+                  <Text style={styles.emptyStateText}>
+                    {isTimeoutError(newsError)
+                      ? 'Regional news took too long to load. Check your connection and retry.'
+                      : 'Regional news could not be loaded right now.'}
+                  </Text>
+                </View>
+              ) : newsItems.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>No news items are available right now.</Text>
+                </View>
+              ) : (
+                newsItems.map((article, index) => (
+                  <View key={article.id || article.url || `news-${index}`} style={styles.newsCard}>
+                    <Text style={styles.newsCardTitle} numberOfLines={2}>
+                      {article.title || article.headline || 'Regional news update'}
+                    </Text>
+                    <Text style={styles.newsCardMeta} numberOfLines={1}>
+                      {[article.source, article.location, article.region].filter(Boolean).join(' · ') || 'Regional feed'}
+                    </Text>
+                    <Text style={styles.newsCardSummary} numberOfLines={3}>
+                      {article.summary || article.snippet || article.description || 'Open the full feed for more detail.'}
+                    </Text>
+                  </View>
+                ))
+              )
+            ) : activeTab === 'COMMUNITY' ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateTitle}>Community unavailable here</Text>
+                <Text style={styles.emptyStateText}>
+                  Open the dedicated Community tab to view or publish community posts. The map sheet does not embed that feed yet.
                 </Text>
               </View>
             ) : filteredEvents.length === 0 ? (
@@ -878,6 +959,7 @@ const styles = StyleSheet.create({
   tabText: { color: colors.textDim, fontSize: 12, fontWeight: '600' },
   tabTextActive: { color: colors.blue },
   cardsContainer: { gap: spacing.md },
+  bottomSheetLoader: { paddingVertical: spacing.xxl },
   emptyStateTitle: { color: colors.text, fontSize: 14, fontWeight: '700', marginBottom: spacing.xs },
   card: {
     flexDirection: 'row',
@@ -909,6 +991,17 @@ const styles = StyleSheet.create({
   severityBadge: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: 4 },
   severityText: { color: colors.black, fontSize: 10, fontWeight: '700' },
   cardLocation: { color: colors.textSec, fontSize: 11 },
+  newsCard: {
+    backgroundColor: colors.panelLight,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  newsCardTitle: { color: colors.text, fontSize: 13, fontWeight: '700' },
+  newsCardMeta: { color: colors.blue, fontSize: 11, fontWeight: '600' },
+  newsCardSummary: { color: colors.textSec, fontSize: 12, lineHeight: 18 },
   emptyState: { paddingVertical: spacing.xxl, justifyContent: 'center', alignItems: 'center' },
   emptyStateText: { color: colors.textDim, fontSize: 12 },
 });

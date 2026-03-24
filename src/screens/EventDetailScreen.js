@@ -122,8 +122,8 @@ const EventDetailScreen = ({ route, navigation }) => {
   }
 
   const tabs = ['DETAILS', 'IMAGERY', 'FEED', 'ECOSYSTEM'];
-  const eventLat = event.lat || -33.8688;
-  const eventLng = event.lng || 151.2093;
+  const eventLat = event.lat ?? -33.8688;
+  const eventLng = event.lng ?? 151.2093;
   const impactSignals = [
     { label: 'Population exposure', value: event.population || event.affected || 'Assessing', tone: event.population || event.affected ? 'high' : event.severity },
     { label: 'Infrastructure stress', value: event.area || event.wind || event.surge || 'Monitoring network strain', tone: event.severity },
