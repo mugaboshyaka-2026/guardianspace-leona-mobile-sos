@@ -103,6 +103,8 @@ const ThreadScreen = ({ route, navigation }) => {
   const [messages, setMessages] = useState(THREAD_MESSAGES.default);
   const [inputText, setInputText] = useState('');
   const flatListRef = useRef(null);
+  const pendingReplyTimeoutsRef = useRef(new Set());
+  const isScreenActiveRef = useRef(true);
 
   const scrollToBottom = () => {
     if (flatListRef.current) {
@@ -113,6 +115,16 @@ const ThreadScreen = ({ route, navigation }) => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    isScreenActiveRef.current = true;
+
+    return () => {
+      isScreenActiveRef.current = false;
+      pendingReplyTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
+      pendingReplyTimeoutsRef.current.clear();
+    };
+  }, []);
 
   const handleSend = () => {
     if (inputText.trim()) {
@@ -145,7 +157,11 @@ const ThreadScreen = ({ route, navigation }) => {
         "Confirmed. Looping in LEONA for situational awareness.",
       ];
       const reply = AUTO_REPLIES[Math.floor(Math.random() * AUTO_REPLIES.length)];
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
+        pendingReplyTimeoutsRef.current.delete(timeoutId);
+        if (!isScreenActiveRef.current) {
+          return;
+        }
         const replyMsg = {
           id: (Date.now() + 1).toString(),
           ...responder,
@@ -155,6 +171,7 @@ const ThreadScreen = ({ route, navigation }) => {
         };
         setMessages((prev) => [...prev, replyMsg]);
       }, 1200);
+      pendingReplyTimeoutsRef.current.add(timeoutId);
     }
   };
 
