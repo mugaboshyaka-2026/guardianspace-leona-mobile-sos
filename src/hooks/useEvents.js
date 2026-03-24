@@ -52,6 +52,7 @@ function emitLeonaChat() {
     listener({
       messages: leonaChatStore.messages,
       sending: leonaChatStore.sending,
+      hasQueuedRequest: !!leonaChatStore.queuedRequest,
     })
   );
 }
@@ -638,11 +639,13 @@ export function useProfile(enabled = true) {
 export function useLeonaChat() {
   const [messages, setMessages] = useState(leonaChatStore.messages);
   const [sending, setSending] = useState(leonaChatStore.sending);
+  const [hasQueuedRequest, setHasQueuedRequest] = useState(!!leonaChatStore.queuedRequest);
 
   useEffect(() => {
     const listener = (next) => {
       setMessages(next.messages);
       setSending(next.sending);
+      setHasQueuedRequest(!!next.hasQueuedRequest);
     };
 
     leonaChatStore.listeners.add(listener);
@@ -689,7 +692,7 @@ export function useLeonaChat() {
     await executeLeonaChatSend(userText, options);
   }, []);
 
-  return { messages, sending, send, setMessages: setSharedMessages };
+  return { messages, sending, hasQueuedRequest, send, setMessages: setSharedMessages };
 }
 
 /**

@@ -287,7 +287,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
   };
 
   // ── Live API data ──
-  const { messages, sending, send: sendChat, setMessages } = useLeonaChat();
+  const { messages, sending, hasQueuedRequest, send: sendChat, setMessages } = useLeonaChat();
   const { events: myEvents, error: myEventsError } = useMyEvents(myDataAuthEnabled);
   const { events: worldEvents } = useWorldEvents();
   const { aois, error: aoisError } = useAOIs(myDataAuthEnabled);
@@ -461,8 +461,12 @@ const LeonaChatScreen = ({ navigation, route }) => {
   useEffect(() => { scrollToBottom(); }, [messages.length]);
 
   const handleChipPress = (chipText) => {
-    if (sending) return;
-    sendChatWithContext(chipText);
+    if (hasQueuedRequest) return;
+    sendChatWithContext(chipText, {
+      requestKind: 'quick-chip',
+      pendingText: `LEONA is working on "${chipText}"...`,
+      failureText: 'LEONA could not finish that quick request right now. Please retry once the current response completes.',
+    });
   };
 
   const handleAskBriefPress = useCallback(() => {
@@ -821,14 +825,27 @@ const LeonaChatScreen = ({ navigation, route }) => {
         {quickChips.map((chip, idx) => (
           <TouchableOpacity
             key={idx}
-            style={[styles.chip, sending && styles.chipDisabled]}
+            style={[styles.chip, (sending || hasQueuedRequest) && styles.chipDisabled]}
             onPress={() => handleChipPress(chip)}
-            disabled={sending}
+            disabled={hasQueuedRequest}
           >
             <Text style={styles.chipText}>{chip}</Text>
           </TouchableOpacity>
         ))}
       </View>
+
+      {(sending || hasQueuedRequest) && (
+        <View style={styles.chatBusyBanner}>
+          <Text style={styles.chatBusyBannerTitle}>
+            {hasQueuedRequest ? 'One request queued' : 'LEONA is busy'}
+          </Text>
+          <Text style={styles.chatBusyBannerText}>
+            {hasQueuedRequest
+              ? 'LEONA is finishing the current response and will run one queued follow-up next.'
+              : 'LEONA is processing your request. You can queue one more quick action.'}
+          </Text>
+        </View>
+      )}
 
       <FlatList
         ref={flatListRef}
@@ -856,9 +873,9 @@ const LeonaChatScreen = ({ navigation, route }) => {
           maxLength={1000}
         />
         <TouchableOpacity
-          style={[styles.sendButton, (!inputText.trim() || sending) && styles.sendButtonDisabled]}
+          style={[styles.sendButton, (!inputText.trim() || sending || hasQueuedRequest) && styles.sendButtonDisabled]}
           onPress={handleSend}
-          disabled={!inputText.trim() || sending}
+          disabled={!inputText.trim() || sending || hasQueuedRequest}
         >
           {sending ? <ActivityIndicator size="small" color={colors.white} /> : <Text style={styles.sendButtonText}>→</Text>}
         </TouchableOpacity>
@@ -1343,6 +1360,20 @@ const styles = StyleSheet.create({
   chipText: { color: colors.purpleLight, fontSize: 12, fontWeight: '600' },
 
   // Input bar — attach + text + send
+  chatBusyBanner: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(107,72,255,0.22)',
+    backgroundColor: 'rgba(107,72,255,0.12)',
+    gap: 2,
+  },
+  chatBusyBannerTitle: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  chatBusyBannerText: { color: colors.textSec, fontSize: 11, lineHeight: 16 },
   inputContainer: {
     flexDirection: 'row', paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
     borderTopColor: colors.border, borderTopWidth: 1, gap: spacing.sm, alignItems: 'flex-end',
