@@ -98,22 +98,53 @@ const MapHomeScreen = ({ navigation }) => {
     () => (mapScope === 'LOCAL' ? localEvents : globalEvents),
     [globalEvents, localEvents, mapScope]
   );
+  const normalizedSearchText = searchText.trim().toLowerCase();
 
   const visibleEvents = useMemo(
     () => scopedEvents.filter((event) => productConfig.enabledMapLayers.includes(event.type) && layerStates[event.type] !== false),
     [productConfig.enabledMapLayers, scopedEvents, layerStates]
   );
+  const searchedEvents = useMemo(() => {
+    if (!normalizedSearchText) {
+      return visibleEvents;
+    }
+
+    const searchTerms = normalizedSearchText.split(/\s+/).filter(Boolean);
+    return visibleEvents.filter((event) => {
+      const haystack = [
+        event.title,
+        event.location,
+        event.type,
+        event.category,
+        event.source,
+        event.country,
+        event.country_code,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return searchTerms.every((term) => haystack.includes(term));
+    });
+  }, [normalizedSearchText, visibleEvents]);
   const mapMarkerEvents = useMemo(
-    () => (showEventMarkers ? visibleEvents : []),
-    [showEventMarkers, visibleEvents]
+    () => (showEventMarkers ? searchedEvents : []),
+    [searchedEvents, showEventMarkers]
   );
+  const searchRegion = useMemo(() => {
+    if (!normalizedSearchText) {
+      return null;
+    }
+
+    return deriveLocalRegion(searchText, searchedEvents) || null;
+  }, [normalizedSearchText, searchText, searchedEvents]);
 
   const filteredEvents = useMemo(() => {
     if (activeTab === 'COMMUNITY' && !productConfig.canUseCommunity) return [];
-    if (activeTab === 'NEWS') return visibleEvents.slice(0, 5);
-    if (activeTab === 'COMMUNITY') return visibleEvents.slice(0, 3);
-    return visibleEvents;
-  }, [activeTab, productConfig.canUseCommunity, visibleEvents]);
+    if (activeTab === 'NEWS') return searchedEvents.slice(0, 5);
+    if (activeTab === 'COMMUNITY') return searchedEvents.slice(0, 3);
+    return searchedEvents;
+  }, [activeTab, productConfig.canUseCommunity, searchedEvents]);
   const showMyDataUnavailableState = myDataUnavailable && (mapScope === 'LOCAL' || activeTab === 'MY_ALERTS');
 
   useEffect(() => {
@@ -139,9 +170,9 @@ const MapHomeScreen = ({ navigation }) => {
   }, [layersVisible, showRiskZones]);
 
   useEffect(() => {
-    const region = mapScope === 'LOCAL' ? localRegion : GLOBAL_REGION;
+    const region = searchRegion || (mapScope === 'LOCAL' ? localRegion : GLOBAL_REGION);
     mapRef.current?.animateToRegion?.(region, 600);
-  }, [localRegion, mapScope]);
+  }, [localRegion, mapScope, searchRegion]);
 
   const handleMarkerPress = (event) => navigation.navigate('EventDetail', { event });
   const handleCardPress = (event) => navigation.navigate('EventDetail', { event });
@@ -193,6 +224,17 @@ const MapHomeScreen = ({ navigation }) => {
   const handleFitAll = useCallback(() => {
     mapRef.current?.animateToRegion?.(GLOBAL_REGION, 500);
   }, []);
+  const handleSearchSubmit = useCallback(() => {
+    if (!searchRegion) {
+      return;
+    }
+    mapRef.current?.animateToRegion?.(searchRegion, 600);
+  }, [searchRegion]);
+  const handleClearSearch = useCallback(() => {
+    setSearchText('');
+    const region = mapScope === 'LOCAL' ? localRegion : GLOBAL_REGION;
+    mapRef.current?.animateToRegion?.(region, 600);
+  }, [localRegion, mapScope]);
 
   return (
     <View style={styles.container}>
@@ -236,11 +278,13 @@ const MapHomeScreen = ({ navigation }) => {
             placeholderTextColor="#999"
             value={searchText}
             onChangeText={setSearchText}
+            onSubmitEditing={handleSearchSubmit}
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
+            returnKeyType="search"
           />
           {searchText.length > 0 ? (
-            <TouchableOpacity onPress={() => setSearchText('')}>
+            <TouchableOpacity onPress={handleClearSearch}>
               <Text style={styles.clearBtn}>X</Text>
             </TouchableOpacity>
           ) : null}
@@ -404,7 +448,9 @@ const MapHomeScreen = ({ navigation }) => {
               </View>
             ) : filteredEvents.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateText}>No events</Text>
+                <Text style={styles.emptyStateText}>
+                  {normalizedSearchText ? 'No events match this search' : 'No events'}
+                </Text>
               </View>
             ) : (
               filteredEvents.map((event) => (
