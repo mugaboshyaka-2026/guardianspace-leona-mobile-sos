@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -74,24 +74,38 @@ const EventDetailScreen = ({ route, navigation }) => {
   const [is3D, setIs3D] = useState(true);
   const [relatedNews, setRelatedNews] = useState([]);
   const [newsLoading, setNewsLoading] = useState(false);
-  const [newsFailed, setNewsFailed] = useState(false);
+  const [newsError, setNewsError] = useState(null);
+
+  const loadRelatedNews = useCallback(async () => {
+    if (!event?.id) {
+      return;
+    }
+
+    setNewsLoading(true);
+    setNewsError(null);
+    try {
+      const data = await getRelatedNews(event.id);
+      setRelatedNews(data?.articles || []);
+    } catch (err) {
+      setNewsError(err?.message || 'Related coverage could not be loaded.');
+      console.warn('[EventDetail] Related news failed:', err.message);
+    } finally {
+      setNewsLoading(false);
+    }
+  }, [event?.id]);
 
   // Fetch related news when FEED tab is selected
   useEffect(() => {
-    if (activeTab === 'FEED' && event?.id && relatedNews.length === 0 && !newsFailed) {
-      setNewsLoading(true);
-      getRelatedNews(event.id)
-        .then((data) => {
-          setRelatedNews(data?.articles || []);
-          setNewsFailed(false);
-        })
-        .catch((err) => {
-          setNewsFailed(true);
-          console.warn('[EventDetail] Related news failed:', err.message);
-        })
-        .finally(() => setNewsLoading(false));
+    if (activeTab === 'FEED' && event?.id && relatedNews.length === 0 && !newsLoading && !newsError) {
+      loadRelatedNews();
     }
-  }, [activeTab, event?.id, newsFailed, relatedNews.length]);
+  }, [activeTab, event?.id, loadRelatedNews, newsError, newsLoading, relatedNews.length]);
+
+  useEffect(() => {
+    setRelatedNews([]);
+    setNewsError(null);
+    setNewsLoading(false);
+  }, [event?.id]);
 
   if (!event) {
     return (
@@ -392,11 +406,24 @@ const EventDetailScreen = ({ route, navigation }) => {
 
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionLabel}>RELATED COVERAGE</Text>
-        <Text style={styles.sectionMetaText}>{relatedCoverage.length} items</Text>
+        <Text style={styles.sectionMetaText}>
+          {newsError ? 'Unavailable' : `${relatedCoverage.length} items`}
+        </Text>
       </View>
 
       {newsLoading ? (
         <ActivityIndicator color={colors.blue} style={{ paddingVertical: 40 }} />
+      ) : newsError ? (
+        <View style={styles.emptyStateCard}>
+          <Text style={styles.emptyStateTitle}>Related coverage unavailable</Text>
+          <Text style={styles.placeholderText}>
+            We could not load related news for this event. Check your connection and try again.
+          </Text>
+          <Text style={styles.errorDetailText}>{newsError}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={loadRelatedNews}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
       ) : relatedCoverage.length > 0 ? (
         relatedCoverage.map((article) => (
           <View key={article.id} style={styles.coverageCard}>
@@ -1323,6 +1350,27 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 14,
     fontWeight: '700',
+  },
+  errorDetailText: {
+    color: colors.critical,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.blue,
+    backgroundColor: colors.blueDim,
+  },
+  retryButtonText: {
+    color: colors.blueLight,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
   },
   ecosystemGrid: {
     flexDirection: 'row',
