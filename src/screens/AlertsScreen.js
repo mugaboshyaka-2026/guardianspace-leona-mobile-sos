@@ -117,8 +117,9 @@ const AlertsScreen = ({ navigation, route }) => {
     }
   }, [route?.params?.activeTab]);
 
+  const myAlertsPendingAuth = !authLoaded || (isSignedIn && !authReady);
   const isLoading = activeTab === 'MY'
-    ? myLoading
+    ? (myAlertsPendingAuth || myLoading)
     : activeTab === 'GLOBAL'
       ? worldLoading
       : favLoading;

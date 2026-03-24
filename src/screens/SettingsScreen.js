@@ -1,4 +1,4 @@
-import React, { useContext, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,8 @@ import { PRODUCT_CONFIGS, getProductConfig } from '../lib/products';
 import { useAOIs } from '../hooks/useEvents';
 import { updateUserProfile } from '../lib/api';
 import { mergeStoredSettingsPreferences } from '../lib/settingsPreferences';
+
+const MAP_TYPE_OPTIONS = ['2D', '3D', 'Satellite'];
 
 const SettingsScreen = ({ navigation }) => {
   const { userConfig, setUserConfig } = useContext(AppContext);
@@ -37,14 +39,22 @@ const SettingsScreen = ({ navigation }) => {
   const showRiskZones = useMemo(() => (
     userConfig?.showRiskZones ?? userConfig?.preferences?.show_risk_zones ?? true
   ), [userConfig?.preferences?.show_risk_zones, userConfig?.showRiskZones]);
+  const defaultMapType = useMemo(() => {
+    const configuredMapType = userConfig?.defaultMapType ?? userConfig?.preferences?.default_map_type ?? '2D';
+    return MAP_TYPE_OPTIONS.includes(configuredMapType) ? configuredMapType : '2D';
+  }, [userConfig?.defaultMapType, userConfig?.preferences?.default_map_type]);
 
   const [emailDigest, setEmailDigest] = useState(false);
   const [highResImagery, setHighResImagery] = useState(false);
   const [offlineCache, setOfflineCache] = useState(true);
   const [dataSaverMode, setDataSaverMode] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
-  const [mapType, setMapType] = useState('2D');
+  const [mapType, setMapType] = useState(defaultMapType);
   const [refreshInterval, setRefreshInterval] = useState('1m');
+
+  useEffect(() => {
+    setMapType(defaultMapType);
+  }, [defaultMapType]);
 
   const handlePlanChange = (planId) => {
     setUserConfig((prev) => ({
@@ -94,6 +104,19 @@ const SettingsScreen = ({ navigation }) => {
     handleNotificationToggle('showRiskZones', 'show_risk_zones', value);
   };
 
+  const handleMapTypeChange = (value) => {
+    setMapType(value);
+    setUserConfig((prev) => ({
+      ...(prev || {}),
+      defaultMapType: value,
+      preferences: {
+        ...(prev?.preferences || {}),
+        default_map_type: value,
+      },
+    }));
+    persistNotificationPreferences({ default_map_type: value });
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -122,8 +145,8 @@ const SettingsScreen = ({ navigation }) => {
           <SelectorRow
             label="Default Map Type"
             value={mapType}
-            options={['2D', '3D', 'Satellite']}
-            onSelect={setMapType}
+            options={MAP_TYPE_OPTIONS}
+            onSelect={handleMapTypeChange}
           />
           <SettingRow label="Show Event Markers" value={showMarkers} onToggle={handleShowMarkersToggle} />
           <SettingRow label="Show Risk Zones" value={showRiskZones} onToggle={handleShowRiskZonesToggle} />

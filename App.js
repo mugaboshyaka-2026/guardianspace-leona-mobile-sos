@@ -147,6 +147,12 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         ?? profile?.preferences?.showRiskZones
         ?? userConfig?.showRiskZones
         ?? true;
+      const persistedDefaultMapType = localPreferences?.default_map_type
+        ?? localPreferences?.defaultMapType
+        ?? profile?.preferences?.default_map_type
+        ?? profile?.preferences?.defaultMapType
+        ?? userConfig?.defaultMapType
+        ?? '2D';
       const persistedAois = aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean);
 
       if (!persistedAois.length) {
@@ -177,6 +183,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         soundVibration: Boolean(persistedSoundVibration),
         showEventMarkers: Boolean(persistedShowMarkers),
         showRiskZones: Boolean(persistedShowRiskZones),
+        defaultMapType: persistedDefaultMapType,
         preferences: {
           ...(prev?.preferences || {}),
           ...(profile?.preferences || {}),
@@ -186,6 +193,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
           sound_vibration: Boolean(persistedSoundVibration),
           show_event_markers: Boolean(persistedShowMarkers),
           show_risk_zones: Boolean(persistedShowRiskZones),
+          default_map_type: persistedDefaultMapType,
         },
       }));
       console.log('[App] userConfig hydrated', {
@@ -198,6 +206,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         soundVibration: Boolean(persistedSoundVibration),
         showEventMarkers: Boolean(persistedShowMarkers),
         showRiskZones: Boolean(persistedShowRiskZones),
+        defaultMapType: persistedDefaultMapType,
       });
     };
 

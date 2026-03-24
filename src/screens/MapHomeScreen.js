@@ -29,6 +29,7 @@ const Marker = mapsModule.Marker;
 
 const LOCAL_REGION = { latitude: -33.8688, longitude: 151.2093, latitudeDelta: 8, longitudeDelta: 8 };
 const GLOBAL_REGION = { latitude: 25, longitude: 10, latitudeDelta: 80, longitudeDelta: 80 };
+const MAP_MODE_OPTIONS = ['2D', '3D', 'Satellite'];
 
 const layers = [
   { key: 'wildfire', label: 'Wildfires', icon: 'F' },
@@ -47,7 +48,6 @@ const MapHomeScreen = ({ navigation }) => {
   const productConfig = getProductConfig(userConfig?.product);
   const mapRef = useRef(null);
   const bottomSheetRef = useRef(null);
-  const [is3D, setIs3D] = useState(false);
   const [mapScope, setMapScope] = useState('LOCAL');
   const [activeTab, setActiveTab] = useState('MY_ALERTS');
   const [layersVisible, setLayersVisible] = useState(false);
@@ -66,6 +66,11 @@ const MapHomeScreen = ({ navigation }) => {
   const snapPoints = useMemo(() => [100, 300, 520], []);
   const myDataAuthEnabled = isSignedIn && authReady;
   const myDataRequiresAuth = authLoaded && !myDataAuthEnabled;
+  const defaultMapMode = useMemo(() => {
+    const configuredMapMode = userConfig?.defaultMapType ?? userConfig?.preferences?.default_map_type ?? '2D';
+    return MAP_MODE_OPTIONS.includes(configuredMapMode) ? configuredMapMode : '2D';
+  }, [userConfig?.defaultMapType, userConfig?.preferences?.default_map_type]);
+  const [mapMode, setMapMode] = useState(defaultMapMode);
 
   const { events: myEvents, error: myEventsError } = useMyEvents(myDataAuthEnabled);
   const { error: aoisError } = useAOIs((mapScope === 'LOCAL' || activeTab === 'MY_ALERTS') && myDataAuthEnabled);
@@ -170,6 +175,10 @@ const MapHomeScreen = ({ navigation }) => {
   }, [layersVisible, showRiskZones]);
 
   useEffect(() => {
+    setMapMode(defaultMapMode);
+  }, [defaultMapMode]);
+
+  useEffect(() => {
     const region = searchRegion || (mapScope === 'LOCAL' ? localRegion : GLOBAL_REGION);
     mapRef.current?.animateToRegion?.(region, 600);
   }, [localRegion, mapScope, searchRegion]);
@@ -241,11 +250,11 @@ const MapHomeScreen = ({ navigation }) => {
       <MapView
         ref={mapRef}
         style={styles.map}
-        mapType={Platform.OS === 'web' ? undefined : is3D ? 'hybridFlyover' : 'mutedStandard'}
+        mapType={Platform.OS === 'web' ? undefined : mapMode === '3D' ? 'hybridFlyover' : mapMode === 'Satellite' ? 'satellite' : 'mutedStandard'}
         userInterfaceStyle={Platform.OS === 'web' ? undefined : 'dark'}
         initialRegion={LOCAL_REGION}
-        pitchEnabled={Platform.OS !== 'web' && is3D}
-        rotateEnabled={Platform.OS !== 'web'}
+        pitchEnabled={Platform.OS !== 'web' && mapMode === '3D'}
+        rotateEnabled={Platform.OS !== 'web' && mapMode === '3D'}
         showsCompass={false}
         showsScale={false}
         showsUserLocation={false}
@@ -369,17 +378,24 @@ const MapHomeScreen = ({ navigation }) => {
 
       <View style={styles.viewToggle}>
         <TouchableOpacity
-          style={[styles.viewButton, !is3D && styles.viewButtonActive]}
-          onPress={() => setIs3D(false)}
+          style={[styles.viewButton, mapMode === '2D' && styles.viewButtonActive]}
+          onPress={() => setMapMode('2D')}
         >
-          <Text style={[styles.viewButtonText, !is3D && styles.viewBtnTextActive]}>2D</Text>
+          <Text style={[styles.viewButtonText, mapMode === '2D' && styles.viewBtnTextActive]}>2D</Text>
         </TouchableOpacity>
         <View style={styles.viewToggleDivider} />
         <TouchableOpacity
-          style={[styles.viewButton, is3D && styles.viewButtonActive]}
-          onPress={() => setIs3D(true)}
+          style={[styles.viewButton, mapMode === 'Satellite' && styles.viewButtonActive]}
+          onPress={() => setMapMode('Satellite')}
         >
-          <Text style={[styles.viewButtonText, is3D && styles.viewBtnTextActive]}>3D</Text>
+          <Text style={[styles.viewButtonText, mapMode === 'Satellite' && styles.viewBtnTextActive]}>SAT</Text>
+        </TouchableOpacity>
+        <View style={styles.viewToggleDivider} />
+        <TouchableOpacity
+          style={[styles.viewButton, mapMode === '3D' && styles.viewButtonActive]}
+          onPress={() => setMapMode('3D')}
+        >
+          <Text style={[styles.viewButtonText, mapMode === '3D' && styles.viewBtnTextActive]}>3D</Text>
         </TouchableOpacity>
       </View>
 
