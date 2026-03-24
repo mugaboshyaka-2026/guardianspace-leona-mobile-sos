@@ -23,6 +23,7 @@ import { useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
 import { filterEventsForConfig } from '../lib/locality';
 import { getProductConfig, limitEventsForProduct } from '../lib/products';
+import { useAuth } from '../lib/auth';
 
 // LEONA avatar image
 const leonaAvatar = require('../assets/leona-avatar.png');
@@ -178,15 +179,17 @@ const LeonaTabButton = ({ onPress, accessibilityState }) => {
 
 export const AppNavigator = () => {
   const { userConfig } = useContext(AppContext);
+  const { isSignedIn, authReady } = useAuth();
   const productConfig = getProductConfig(userConfig?.product);
-  const { events: myEvents } = useMyEvents();
+  const myDataAuthEnabled = isSignedIn && authReady;
+  const { events: myEvents } = useMyEvents(myDataAuthEnabled);
   const { events: worldEvents } = useWorldEvents();
   const filteredMyEvents = useMemo(
     () => limitEventsForProduct(
-      filterEventsForConfig(myEvents.length > 0 ? myEvents : worldEvents, userConfig, 'local'),
+      filterEventsForConfig(myEvents, userConfig, 'local'),
       userConfig?.product
     ),
-    [myEvents, userConfig, worldEvents]
+    [myEvents, userConfig]
   );
   const badgeEvents = useMemo(
     () => (
@@ -196,7 +199,7 @@ export const AppNavigator = () => {
     ),
     [filteredMyEvents, userConfig?.criticalOnly]
   );
-  const alertsBadge = badgeEvents.length > 0 ? badgeEvents.length : undefined;
+  const alertsBadge = myDataAuthEnabled && badgeEvents.length > 0 ? badgeEvents.length : undefined;
 
   return (
     <Tab.Navigator

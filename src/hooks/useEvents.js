@@ -181,6 +181,10 @@ function isStale(key) {
   return !t || Date.now() - t > STALE_MS;
 }
 
+export function isAccessDeniedError(error) {
+  return error?.status === 401 || error?.status === 403;
+}
+
 function mergeEventToFront(existing = [], incoming) {
   if (!incoming?.id && !incoming?.event_id) {
     return existing;
@@ -205,12 +209,18 @@ function mergeEventToFront(existing = [], incoming) {
 /**
  * useMyEvents — returns the user's AOI events.
  */
-export function useMyEvents() {
+export function useMyEvents(enabled = true) {
   const [events, setEvents] = useState(cache.myEvents || []);
-  const [loading, setLoading] = useState(!cache.myEvents);
+  const [loading, setLoading] = useState(enabled && !cache.myEvents);
   const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
+    if (!enabled) {
+      setEvents([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -225,7 +235,7 @@ export function useMyEvents() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     if (isStale('myEvents')) refresh();
@@ -233,6 +243,9 @@ export function useMyEvents() {
 
   // Listen for real-time updates
   useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
     const unsub = onEventUpdate((msg) => {
       if (msg.type === 'aoi_alert' && msg.event) {
         setEvents((prev) => {
@@ -255,7 +268,7 @@ export function useMyEvents() {
       }
     });
     return unsub;
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   return { events, loading, error, refresh };
 }

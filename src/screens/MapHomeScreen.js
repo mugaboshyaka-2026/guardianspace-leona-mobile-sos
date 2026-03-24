@@ -11,10 +11,11 @@ import {
 } from 'react-native';
 import BottomSheet from '@gorhom/bottom-sheet';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
-import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
+import { isAccessDeniedError, useAOIs, useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
 import { deriveLocalRegion, filterEventsForConfig } from '../lib/locality';
 import { getProductConfig, limitEventsForProduct } from '../lib/products';
+import { useAuth } from '../lib/auth';
 
 const mapsModule = Platform.OS === 'web'
   ? {
@@ -42,6 +43,7 @@ const layers = [
 
 const MapHomeScreen = ({ navigation }) => {
   const { userConfig } = useContext(AppContext);
+  const { isLoaded: authLoaded, isSignedIn, authReady } = useAuth();
   const productConfig = getProductConfig(userConfig?.product);
   const mapRef = useRef(null);
   const bottomSheetRef = useRef(null);
@@ -62,9 +64,13 @@ const MapHomeScreen = ({ navigation }) => {
     health: false,
   });
   const snapPoints = useMemo(() => [100, 300, 520], []);
+  const myDataAuthEnabled = isSignedIn && authReady;
+  const myDataRequiresAuth = authLoaded && !myDataAuthEnabled;
 
-  const { events: myEvents } = useMyEvents();
+  const { events: myEvents, error: myEventsError } = useMyEvents(myDataAuthEnabled);
+  const { error: aoisError } = useAOIs((mapScope === 'LOCAL' || activeTab === 'MY_ALERTS') && myDataAuthEnabled);
   const { events: worldEvents } = useWorldEvents();
+  const myDataUnavailable = myDataRequiresAuth || isAccessDeniedError(myEventsError) || isAccessDeniedError(aoisError);
   const showEventMarkers = userConfig?.showEventMarkers ?? userConfig?.preferences?.show_event_markers ?? true;
   const showRiskZones = userConfig?.showRiskZones ?? userConfig?.preferences?.show_risk_zones ?? true;
   const availableLayers = useMemo(
@@ -75,13 +81,9 @@ const MapHomeScreen = ({ navigation }) => {
     () => (productConfig.canUseCommunity ? ['MY_ALERTS', 'EVENTS', 'NEWS', 'COMMUNITY'] : ['MY_ALERTS', 'EVENTS', 'NEWS']),
     [productConfig.canUseCommunity]
   );
-  const localSourceEvents = useMemo(
-    () => (myEvents.length > 0 ? myEvents : worldEvents),
-    [myEvents, worldEvents]
-  );
   const localEvents = useMemo(
-    () => limitEventsForProduct(filterEventsForConfig(localSourceEvents, userConfig, 'local'), userConfig?.product),
-    [localSourceEvents, userConfig]
+    () => limitEventsForProduct(filterEventsForConfig(myEvents, userConfig, 'local'), userConfig?.product),
+    [myEvents, userConfig]
   );
   const globalEvents = useMemo(
     () => limitEventsForProduct(filterEventsForConfig(worldEvents, userConfig, 'global'), userConfig?.product),
@@ -112,6 +114,7 @@ const MapHomeScreen = ({ navigation }) => {
     if (activeTab === 'COMMUNITY') return visibleEvents.slice(0, 3);
     return visibleEvents;
   }, [activeTab, productConfig.canUseCommunity, visibleEvents]);
+  const showMyDataUnavailableState = myDataUnavailable && (mapScope === 'LOCAL' || activeTab === 'MY_ALERTS');
 
   useEffect(() => {
     setLayerStates((prev) => {
@@ -265,6 +268,15 @@ const MapHomeScreen = ({ navigation }) => {
         </View>
       </View>
 
+      {showMyDataUnavailableState ? (
+        <View style={styles.unavailableBanner}>
+          <Text style={styles.unavailableBannerTitle}>Sign in required</Text>
+          <Text style={styles.unavailableBannerText}>
+            My monitoring is unavailable until you sign in with a valid account.
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.mapToolCol}>
         <TouchableOpacity style={styles.mapToolBtn} onPress={handleZoomIn}>
           <Text style={styles.mapToolBtnText}>+</Text>
@@ -383,7 +395,14 @@ const MapHomeScreen = ({ navigation }) => {
           </View>
 
           <View style={styles.cardsContainer}>
-            {filteredEvents.length === 0 ? (
+            {showMyDataUnavailableState ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateTitle}>Sign in required</Text>
+                <Text style={styles.emptyStateText}>
+                  This screen is not showing fallback My Alert data while you are signed out.
+                </Text>
+              </View>
+            ) : filteredEvents.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyStateText}>No events</Text>
               </View>
@@ -452,6 +471,21 @@ const styles = StyleSheet.create({
     gap: 6,
     zIndex: 10,
   },
+  unavailableBanner: {
+    position: 'absolute',
+    top: 118,
+    right: spacing.lg,
+    maxWidth: 240,
+    backgroundColor: 'rgba(60,16,16,0.94)',
+    borderColor: 'rgba(255,120,120,0.28)',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    zIndex: 11,
+  },
+  unavailableBannerTitle: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  unavailableBannerText: { color: colors.textSec, fontSize: 11, marginTop: 2 },
   topBarRow2: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -683,6 +717,7 @@ const styles = StyleSheet.create({
   tabText: { color: colors.textDim, fontSize: 12, fontWeight: '600' },
   tabTextActive: { color: colors.blue },
   cardsContainer: { gap: spacing.md },
+  emptyStateTitle: { color: colors.text, fontSize: 14, fontWeight: '700', marginBottom: spacing.xs },
   card: {
     flexDirection: 'row',
     backgroundColor: colors.panelLight,

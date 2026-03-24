@@ -16,12 +16,13 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
-import { useMyEvents, useWorldEvents, useAOIs, useLeonaChat, useLeonaBrief } from '../hooks/useEvents';
+import { isAccessDeniedError, useMyEvents, useWorldEvents, useAOIs, useLeonaChat, useLeonaBrief } from '../hooks/useEvents';
 import LeonaHeader from '../components/LeonaHeader';
 import SharedMarkdownMessage from '../components/MarkdownMessage';
 import { AppContext } from '../../App';
 import { getProductConfig, limitEventsForProduct } from '../lib/products';
 import { filterEventsForConfig } from '../lib/locality';
+import { useAuth } from '../lib/auth';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 const { width } = Dimensions.get('window');
@@ -264,6 +265,7 @@ const ChatMessageBubble = React.memo(function ChatMessageBubble({ item }) {
 
 const LeonaChatScreen = ({ navigation, route }) => {
   const { userConfig } = useContext(AppContext);
+  const { isLoaded: authLoaded, isSignedIn, authReady } = useAuth();
   const productConfig = getProductConfig(userConfig?.product);
   const [activeSection, setActiveSection] = useState('CHAT');
   const [activeBriefTab, setActiveBriefTab] = useState('MY');   // 'MY' | 'WORLD'
@@ -272,6 +274,8 @@ const LeonaChatScreen = ({ navigation, route }) => {
   const flatListRef = useRef(null);
   const [pinnedEventIds, setPinnedEventIds] = useState(new Set());
   const lastHandledRequestRef = useRef(null);
+  const myDataAuthEnabled = isSignedIn && authReady;
+  const myDataRequiresAuth = authLoaded && !myDataAuthEnabled;
 
   const togglePin = (eventId) => {
     setPinnedEventIds((prev) => {
@@ -284,17 +288,21 @@ const LeonaChatScreen = ({ navigation, route }) => {
 
   // ── Live API data ──
   const { messages, sending, send: sendChat, setMessages } = useLeonaChat();
-  const { events: myEvents } = useMyEvents();
+  const { events: myEvents, error: myEventsError } = useMyEvents(myDataAuthEnabled);
   const { events: worldEvents } = useWorldEvents();
-  const { aois } = useAOIs();
+  const { aois, error: aoisError } = useAOIs(myDataAuthEnabled);
+  const myDataUnavailable = myDataRequiresAuth || isAccessDeniedError(myEventsError) || isAccessDeniedError(aoisError);
   const userAois = useMemo(() => {
+    if (myDataUnavailable) {
+      return [];
+    }
     if (Array.isArray(userConfig?.aois) && userConfig.aois.length > 0) {
       return userConfig.aois;
     }
     return aois
       .map((aoi) => aoi?.name || aoi?.location_name || aoi?.location || String(aoi))
       .filter(Boolean);
-  }, [aois, userConfig?.aois]);
+  }, [aois, myDataUnavailable, userConfig?.aois]);
   const EVENTS = useMemo(
     () => limitEventsForProduct(
       [...new Map([...myEvents, ...worldEvents].map((event) => [event.id, event])).values()],
@@ -304,10 +312,10 @@ const LeonaChatScreen = ({ navigation, route }) => {
   );
   const myScopedEvents = useMemo(
     () => limitEventsForProduct(
-      filterEventsForConfig(myEvents.length > 0 ? myEvents : worldEvents, userConfig, 'local'),
+      filterEventsForConfig(myEvents, userConfig, 'local'),
       userConfig?.product
     ),
-    [myEvents, userConfig, worldEvents]
+    [myEvents, userConfig]
   );
 
   // Top-level tabs: CHAT (left) · BRIEFS (right) — equal width
@@ -385,12 +393,14 @@ const LeonaChatScreen = ({ navigation, route }) => {
   );
   const { brief: myBrief, loading: myBriefLoading } = useLeonaBrief(
     myBriefContext,
-    activeSection === 'BRIEF' && activeBriefTab === 'MY'
+    activeSection === 'BRIEF' && activeBriefTab === 'MY' && !myDataUnavailable
   );
   const worldNarrative = extractBriefText(worldBrief)
     || `${EVENTS.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`;
-  const myNarrative = extractBriefText(myBrief)
-    || `Active monitoring across ${userAois.length} Areas of Interest with ${myScopedEvents.length} live events currently matched to your scope.`;
+  const myNarrative = myDataUnavailable
+    ? 'My Brief is unavailable until you sign in with a valid account. LEONA is not showing fallback monitoring data.'
+    : extractBriefText(myBrief)
+      || `Active monitoring across ${userAois.length} Areas of Interest with ${myScopedEvents.length} live events currently matched to your scope.`;
   const chatContext = useMemo(() => ({
     scope: 'local_aoi',
     aois: userAois,
@@ -461,6 +471,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
     if (sending) return;
 
     const isMyBrief = activeBriefTab === 'MY';
+    if (isMyBrief && myDataUnavailable) return;
     const prompt = isMyBrief
       ? `Give me a concise briefing for my areas of interest: ${userAois.join(', ') || 'my configured AOIs'}. Current matched events: ${myScopedEvents.length}. Selected event types: ${(userConfig?.eventTypes || []).join(', ') || 'all configured types'}. Radius: ${userConfig?.radius || 0} km.`
       : `Give me a concise global risk briefing. Current global event count: ${EVENTS.length}. Critical: ${severityCounts.critical}, High: ${severityCounts.high}, Elevated: ${severityCounts.elevated}, Monitoring: ${severityCounts.monitoring}.`;
@@ -510,6 +521,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
     setMessages,
     severityCounts,
     topEvents,
+    myDataUnavailable,
     userAois,
     userConfig?.eventTypes,
     userConfig?.radius,
@@ -662,22 +674,28 @@ const LeonaChatScreen = ({ navigation, route }) => {
   // ===== MY BRIEF =====
   const renderMyBrief = () => (
     <ScrollView style={styles.briefContent} showsVerticalScrollIndicator={false}>
+      {myDataUnavailable && (
+        <View style={styles.narrativeCard}>
+          <Text style={styles.narrativeSectionTitle}>SIGN IN REQUIRED</Text>
+          <Text style={styles.narrativeText}>{myNarrative}</Text>
+        </View>
+      )}
       {/* AOI Header */}
-      <View style={styles.myBriefHeader}>
+      {!myDataUnavailable && <View style={styles.myBriefHeader}>
         <View style={styles.blueLine} />
         <Text style={styles.myBriefTitle}>YOUR AREAS OF INTEREST</Text>
-      </View>
+      </View>}
 
-      <View style={styles.aoiTagsRow}>
+      {!myDataUnavailable && <View style={styles.aoiTagsRow}>
         {userAois.map((aoi, idx) => (
           <View key={idx} style={styles.aoiTag}>
             <Text style={styles.aoiText}>📍 {aoi}</Text>
           </View>
         ))}
-      </View>
+      </View>}
 
       {/* Quick Stats */}
-      <View style={styles.myBriefStats}>
+      {!myDataUnavailable && <View style={styles.myBriefStats}>
         <View style={styles.myBriefStat}>
           <Text style={[styles.myBriefStatNum, { color: colors.critical }]}>{mySeverityCounts.critical}</Text>
           <Text style={styles.myBriefStatLabel}>Critical</Text>
@@ -692,7 +710,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
           <Text style={[styles.myBriefStatNum, { color: colors.blue }]}>{userAois.length}</Text>
           <Text style={styles.myBriefStatLabel}>AOIs</Text>
         </View>
-      </View>
+      </View>}
 
       {/* Situation Narrative */}
       <View style={styles.narrativeCard}>
@@ -707,7 +725,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
       </View>
 
       {/* Pinned Events */}
-      {myScopedEvents.filter(e => pinnedEventIds.has(e.id)).length > 0 && (
+      {!myDataUnavailable && myScopedEvents.filter(e => pinnedEventIds.has(e.id)).length > 0 && (
         <View style={styles.briefSection}>
           <View style={styles.pinnedHeader}>
             <Text style={styles.pinnedIcon}>📌</Text>
@@ -739,7 +757,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
       )}
 
       {/* Your Events */}
-      <View style={styles.briefSection}>
+      {!myDataUnavailable && <View style={styles.briefSection}>
         <Text style={styles.briefSectionTitle}>YOUR EVENTS</Text>
         {myTopEvents.filter((event) => !pinnedEventIds.has(event.id)).map((event) => (
           <TouchableOpacity
@@ -760,15 +778,15 @@ const LeonaChatScreen = ({ navigation, route }) => {
             </TouchableOpacity>
           </TouchableOpacity>
         ))}
-      </View>
+      </View>}
 
       {/* CTA */}
-      <TouchableOpacity
+      {!myDataUnavailable && <TouchableOpacity
         style={styles.askLeonaBtn}
         onPress={handleAskBriefPress}
       >
         <Text style={styles.askLeonaBtnText}>Ask LEONA for a detailed brief →</Text>
-      </TouchableOpacity>
+      </TouchableOpacity>}
 
       <View style={{ height: 30 }} />
     </ScrollView>

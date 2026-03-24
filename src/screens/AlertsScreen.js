@@ -10,13 +10,14 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
-import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
+import { isAccessDeniedError, useAOIs, useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { fetchMyFavorites } from '../lib/api';
 import LeonaHeader from '../components/LeonaHeader';
 import { AppContext } from '../../App';
 import { filterEventsForConfig } from '../lib/locality';
 import { limitEventsForProduct } from '../lib/products';
 import { getViewedAlertsMap, markAlertViewed } from '../lib/viewedAlerts';
+import { useAuth } from '../lib/auth';
 
 // Helper: "2d ago", "1w ago", etc.
 function getTimeSince(dateStr) {
@@ -45,18 +46,23 @@ function sortEventsNewestFirst(events = []) {
 
 const AlertsScreen = ({ navigation, route }) => {
   const { userConfig } = useContext(AppContext);
+  const { isLoaded: authLoaded, isSignedIn, authReady } = useAuth();
   const [activeTab, setActiveTab] = useState('MY');
   const [viewedAlerts, setViewedAlerts] = useState({});
+  const myDataAuthEnabled = isSignedIn && authReady;
+  const myDataRequiresAuth = authLoaded && !myDataAuthEnabled;
 
   // ── Live API data ──
-  const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents();
+  const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents(myDataAuthEnabled);
+  const { error: aoisError } = useAOIs(activeTab === 'MY' && myDataAuthEnabled);
   const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents();
+  const myAlertsUnavailable = myDataRequiresAuth || isAccessDeniedError(myError) || isAccessDeniedError(aoisError);
   const filteredMyAlerts = useMemo(
     () => limitEventsForProduct(
-      filterEventsForConfig(myAlerts.length > 0 ? myAlerts : worldEvents, userConfig, 'local'),
+      filterEventsForConfig(myAlerts, userConfig, 'local'),
       userConfig?.product
     ),
-    [myAlerts, userConfig, worldEvents]
+    [myAlerts, userConfig]
   );
   const globalEvents = useMemo(() => {
     const myIds = new Set(filteredMyAlerts.map((e) => e.id));
@@ -113,7 +119,7 @@ const AlertsScreen = ({ navigation, route }) => {
       ? worldLoading
       : favLoading;
   const activeError = activeTab === 'MY'
-    ? myError
+    ? myAlertsUnavailable ? null : myError
     : activeTab === 'GLOBAL'
       ? worldError
       : null;
@@ -262,13 +268,22 @@ const AlertsScreen = ({ navigation, route }) => {
             <ActivityIndicator color={colors.blue} style={styles.loadingIndicator} />
           )}
 
+          {!isLoading && activeTab === 'MY' && myAlertsUnavailable && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>Sign in required</Text>
+              <Text style={styles.emptyText}>
+                My alerts are unavailable until you sign in with a valid account.
+              </Text>
+            </View>
+          )}
+
           {!isLoading && activeError && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>Unable to load alerts right now</Text>
             </View>
           )}
 
-          {!isLoading && !activeError && grouped.map((section) => (
+          {!isLoading && !activeError && !myAlertsUnavailable && grouped.map((section) => (
             <View key={section.key} style={styles.section}>
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionTitleRow}>
@@ -285,7 +300,7 @@ const AlertsScreen = ({ navigation, route }) => {
             </View>
           ))}
 
-          {!isLoading && !activeError && activeTab === 'MY' && viewedEvents.length > 0 && (
+          {!isLoading && !activeError && !myAlertsUnavailable && activeTab === 'MY' && viewedEvents.length > 0 && (
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionTitleRow}>
@@ -302,7 +317,7 @@ const AlertsScreen = ({ navigation, route }) => {
             </View>
           )}
 
-          {!isLoading && !activeError && grouped.length === 0 && viewedEvents.length === 0 && (
+          {!isLoading && !activeError && !myAlertsUnavailable && grouped.length === 0 && viewedEvents.length === 0 && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>No alerts in this category</Text>
             </View>
@@ -462,6 +477,7 @@ const styles = StyleSheet.create({
   severityPillTextViewed: { color: colors.textDim },
   alertTime: { color: colors.textDim, fontSize: 10, fontWeight: '500' },
   emptyState: { paddingVertical: 60, alignItems: 'center', gap: 8 },
+  emptyTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   emptyText: { color: colors.textDim, fontSize: 13 },
   loadingIndicator: { paddingVertical: 40 },
   bottomSpacer: { height: spacing.xl },
