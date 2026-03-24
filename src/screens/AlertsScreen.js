@@ -21,9 +21,13 @@ import { getViewedAlertsMap, markAlertViewed } from '../lib/viewedAlerts';
 import { useAuth } from '../lib/auth';
 
 // Helper: "2d ago", "1w ago", etc.
-function getTimeSince(dateStr) {
+function getTimeSince(dateStr, now = Date.now()) {
   try {
-    const diff = Date.now() - new Date(dateStr).getTime();
+    const eventTime = new Date(dateStr).getTime();
+    if (!Number.isFinite(eventTime)) {
+      return '';
+    }
+    const diff = Math.max(0, now - eventTime);
     const mins = Math.floor(diff / 60000);
     if (mins < 60) return `${mins}m ago`;
     const hrs = Math.floor(mins / 60);
@@ -51,6 +55,7 @@ const AlertsScreen = ({ navigation, route }) => {
   const [activeTab, setActiveTab] = useState('MY');
   const [viewedAlerts, setViewedAlerts] = useState({});
   const [realtimeStatus, setRealtimeStatus] = useState(getRealtimeStatus());
+  const [nowTs, setNowTs] = useState(Date.now());
   const criticalOnlyEnabled = useMemo(
     () => Boolean(userConfig?.criticalOnly ?? userConfig?.preferences?.critical_only ?? userConfig?.preferences?.criticalOnly),
     [userConfig?.criticalOnly, userConfig?.preferences?.critical_only, userConfig?.preferences?.criticalOnly]
@@ -113,6 +118,14 @@ const AlertsScreen = ({ navigation, route }) => {
   }, [loadViewedAlerts]));
 
   useEffect(() => onRealtimeStatusChange(setRealtimeStatus), []);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setNowTs(Date.now());
+    }, 60000);
+
+    return () => clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     const nextTab = route?.params?.activeTab;
@@ -198,11 +211,6 @@ const AlertsScreen = ({ navigation, route }) => {
     navigation.navigate('EventDetail', { event });
   };
 
-  const getTimeAgo = (severity) => {
-    const times = { critical: '2m', high: '14m', elevated: '1h', monitoring: '3h' };
-    return times[severity] || '5m';
-  };
-
   const renderAlertRow = (event, { viewed = false } = {}) => (
     <TouchableOpacity
       key={event.id}
@@ -225,7 +233,9 @@ const AlertsScreen = ({ navigation, route }) => {
             {event.severity.toUpperCase()}
           </Text>
         </View>
-        <Text style={styles.alertTime}>{getTimeAgo(event.severity)}</Text>
+        <Text style={styles.alertTime}>
+          {getTimeSince(event.created_at || event.event_time || event.timestamp || event.updated_at, nowTs)}
+        </Text>
       </View>
     </TouchableOpacity>
   );
