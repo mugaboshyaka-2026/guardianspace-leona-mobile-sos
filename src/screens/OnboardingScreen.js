@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -80,6 +80,7 @@ export default function OnboardingScreen() {
   const [selectedEventTypes, setSelectedEventTypes] = useState(['flood', 'wildfire', 'earthquake']);
   const [pulseAnim] = useState(new Animated.Value(1));
   const [submittingSetup, setSubmittingSetup] = useState(false);
+  const [locationError, setLocationError] = useState('');
 
   useEffect(() => {
     if (step === 5) {
@@ -146,20 +147,28 @@ export default function OnboardingScreen() {
     };
   }, [authLoaded, isSignedIn]);
 
-  useEffect(() => {
-    if (location.trim()) {
-      setSelectedAois((prev) => {
-        if (prev.length > 0) return prev;
-        return [location.trim()];
-      });
-    }
-  }, [location]);
-
   const productLabel = PRODUCTS.find((p) => p.id === selectedProduct)?.label || 'LEONA';
   const allSuggestedAois = useMemo(() => {
     const merged = [...selectedAois, ...existingAois, ...DEFAULT_AOI_SUGGESTIONS];
     return Array.from(new Set(merged.map((item) => item.trim()).filter(Boolean)));
   }, [existingAois, selectedAois]);
+
+  const normalizeAoiInput = useCallback((value) => value.trim(), []);
+  const isResolvableAoi = useCallback((value) => {
+    const normalized = normalizeAoiInput(value);
+    return Boolean(normalized && getLocationCoordinates(normalized));
+  }, [normalizeAoiInput]);
+
+  const getLocationValidationMessage = useCallback((value) => {
+    const normalized = normalizeAoiInput(value);
+    if (!normalized) {
+      return 'Enter a city or region before continuing.';
+    }
+    if (!isResolvableAoi(normalized)) {
+      return 'Choose a valid suggested city or region. Custom locations are not available yet on mobile.';
+    }
+    return '';
+  }, [isResolvableAoi, normalizeAoiInput]);
 
   const showClerkError = (error, fallbackMessage) => {
     const firstError = error?.errors?.[0];
@@ -457,14 +466,24 @@ export default function OnboardingScreen() {
   };
 
   const toggleAoi = (value) => {
-    const normalized = value.trim();
-    if (!normalized) return;
+    const normalized = normalizeAoiInput(value);
+    if (!normalized) {
+      setLocationError('Enter a city or region before adding an AOI.');
+      return false;
+    }
+    if (!isResolvableAoi(normalized)) {
+      setLocationError('Choose a valid suggested city or region. Custom locations are not available yet on mobile.');
+      return false;
+    }
+
+    setLocationError('');
 
     setSelectedAois((prev) => (
       prev.includes(normalized)
         ? prev.filter((item) => item !== normalized)
         : [...prev, normalized]
     ));
+    return true;
   };
 
   const toggleEventType = (value) => {
@@ -503,12 +522,23 @@ export default function OnboardingScreen() {
   };
 
   const handleLocationNext = () => {
-    const normalizedLocation = location.trim();
-    if (normalizedLocation && !selectedAois.includes(normalizedLocation)) {
-      setSelectedAois((prev) => [...prev, normalizedLocation]);
+    const normalizedLocation = normalizeAoiInput(location);
+    const locationMessage = normalizedLocation ? getLocationValidationMessage(normalizedLocation) : '';
+
+    if (locationMessage) {
+      setLocationError(locationMessage);
+      Alert.alert('Valid location required', locationMessage);
+      return;
     }
 
-    if ((normalizedLocation ? [...selectedAois, normalizedLocation] : selectedAois).length === 0) {
+    const nextAois = Array.from(new Set(
+      (normalizedLocation ? [...selectedAois, normalizedLocation] : selectedAois)
+        .map((item) => normalizeAoiInput(item))
+        .filter((item) => item && isResolvableAoi(item))
+    ));
+
+    if (nextAois.length === 0) {
+      setLocationError('Select at least one valid area of interest before continuing.');
       Alert.alert('AOI required', 'Select at least one area of interest before continuing.');
       return;
     }
@@ -518,16 +548,22 @@ export default function OnboardingScreen() {
       return;
     }
 
+    setLocationError('');
+    setSelectedAois(nextAois);
     setStep(5);
   };
 
   const handleComplete = async () => {
-    if (selectedAois.length === 0) {
+    const normalizedAois = Array.from(new Set(
+      selectedAois
+        .map((item) => normalizeAoiInput(item))
+        .filter((item) => item && isResolvableAoi(item))
+    ));
+
+    if (normalizedAois.length === 0) {
       Alert.alert('AOI required', 'Select at least one area of interest before entering the app.');
       return;
     }
-
-    const normalizedAois = Array.from(new Set(selectedAois.map((item) => item.trim()).filter(Boolean)));
 
     if (isSignedIn) {
       const existingAoiSet = new Set(existingAois.map((item) => item.toLowerCase()));
@@ -640,6 +676,7 @@ export default function OnboardingScreen() {
         <StepAoiSetup
           location={location}
           setLocation={setLocation}
+          locationError={locationError}
           selectedAois={selectedAois}
           toggleAoi={toggleAoi}
           suggestions={allSuggestedAois}
@@ -951,6 +988,7 @@ const StepProductSelect = ({ selectedProduct, setSelectedProduct, onNext }) => (
 const StepAoiSetup = ({
   location,
   setLocation,
+  locationError,
   selectedAois,
   toggleAoi,
   suggestions,
@@ -974,9 +1012,16 @@ const StepAoiSetup = ({
         placeholder="Add city, region, or country"
         placeholderTextColor={colors.textDim}
         value={location}
-        onChangeText={setLocation}
+        onChangeText={(value) => {
+          if (locationError) {
+            setLocationError('');
+          }
+          setLocation(value);
+        }}
       />
     </View>
+
+    {locationError ? <Text style={styles.validationText}>{locationError}</Text> : null}
 
     <TouchableOpacity style={styles.buttonOutline} onPress={() => toggleAoi(location)}>
       <Text style={styles.buttonTextOutline}>ADD AOI</Text>
@@ -1258,6 +1303,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textDim,
     marginBottom: spacing.lg,
+    lineHeight: 18,
+  },
+  validationText: {
+    fontSize: 12,
+    color: colors.critical,
+    marginBottom: spacing.md,
     lineHeight: 18,
   },
   faceIDBtn: {
