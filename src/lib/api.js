@@ -140,13 +140,37 @@ const normalizeType = (c) => {
   return TYPE_MAP[c.toLowerCase()] || c;
 };
 
+const hasStableIdValue = (value) => value !== undefined && value !== null && value !== '';
+
+const buildStableEventId = (event, normalizedType, lat, lng) => {
+  const identityParts = [
+    normalizedType || 'unknown',
+    event.title || event.headline || event.name || '',
+    event.location_name || event.location || event.country_code || '',
+    event.source || '',
+    event.url || '',
+    event.created_at || event.event_time || '',
+    Number.isNaN(lat) ? '' : String(lat),
+    Number.isNaN(lng) ? '' : String(lng),
+    event.severity || '',
+  ];
+
+  return `evt-${identityParts.join('|').toLowerCase()}`;
+};
+
 const normalizeEvent = (e) => {
   const lat = parseFloat(e.lat ?? e.latitude ?? e.location_lat ?? '');
   const lng = parseFloat(e.lng ?? e.lon ?? e.longitude ?? e.location_lng ?? e.location_lon ?? '');
+  const normalizedType = normalizeType(e.category || e.type || '');
+  const normalizedId = hasStableIdValue(e.id)
+    ? String(e.id)
+    : hasStableIdValue(e.event_id)
+      ? String(e.event_id)
+      : buildStableEventId(e, normalizedType, lat, lng);
   return {
     ...e,
-    id: e.id || e.event_id || String(Math.random()),
-    type: normalizeType(e.category || e.type || ''),
+    id: normalizedId,
+    type: normalizedType,
     title: e.title || e.headline || e.name || 'Unknown Event',
     lat: isNaN(lat) ? 0 : lat,
     lng: isNaN(lng) ? 0 : lng,
