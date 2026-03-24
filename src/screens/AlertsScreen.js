@@ -16,6 +16,7 @@ import LeonaHeader from '../components/LeonaHeader';
 import { AppContext } from '../../App';
 import { filterEventsForConfig } from '../lib/locality';
 import { limitEventsForProduct } from '../lib/products';
+import { getRealtimeStatus, onRealtimeStatusChange, retryRealtime } from '../lib/realtime';
 import { getViewedAlertsMap, markAlertViewed } from '../lib/viewedAlerts';
 import { useAuth } from '../lib/auth';
 
@@ -49,6 +50,7 @@ const AlertsScreen = ({ navigation, route }) => {
   const { isLoaded: authLoaded, isSignedIn, authReady } = useAuth();
   const [activeTab, setActiveTab] = useState('MY');
   const [viewedAlerts, setViewedAlerts] = useState({});
+  const [realtimeStatus, setRealtimeStatus] = useState(getRealtimeStatus());
   const criticalOnlyEnabled = useMemo(
     () => Boolean(userConfig?.criticalOnly ?? userConfig?.preferences?.critical_only ?? userConfig?.preferences?.criticalOnly),
     [userConfig?.criticalOnly, userConfig?.preferences?.critical_only, userConfig?.preferences?.criticalOnly]
@@ -109,6 +111,8 @@ const AlertsScreen = ({ navigation, route }) => {
   useFocusEffect(useCallback(() => {
     loadViewedAlerts();
   }, [loadViewedAlerts]));
+
+  useEffect(() => onRealtimeStatusChange(setRealtimeStatus), []);
 
   useEffect(() => {
     const nextTab = route?.params?.activeTab;
@@ -274,6 +278,20 @@ const AlertsScreen = ({ navigation, route }) => {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          {realtimeStatus.state === 'offline' && (
+            <View style={styles.realtimeBanner}>
+              <View style={styles.realtimeBannerCopy}>
+                <Text style={styles.realtimeBannerTitle}>Realtime offline</Text>
+                <Text style={styles.realtimeBannerText}>
+                  {realtimeStatus.message || 'Live updates are unavailable right now.'}
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.realtimeBannerButton} onPress={() => retryRealtime().catch(() => {})}>
+                <Text style={styles.realtimeBannerButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {isLoading && (
             <ActivityIndicator color={colors.blue} style={styles.loadingIndicator} />
           )}
@@ -486,6 +504,32 @@ const styles = StyleSheet.create({
   severityPillText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
   severityPillTextViewed: { color: colors.textDim },
   alertTime: { color: colors.textDim, fontSize: 10, fontWeight: '500' },
+  realtimeBanner: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,184,77,0.28)',
+    backgroundColor: 'rgba(255,184,77,0.12)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  realtimeBannerCopy: { flex: 1, gap: 2 },
+  realtimeBannerTitle: { color: colors.text, fontSize: 13, fontWeight: '700' },
+  realtimeBannerText: { color: colors.textSec, fontSize: 12, lineHeight: 17 },
+  realtimeBannerButton: {
+    borderRadius: 999,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  realtimeBannerButtonText: { color: colors.text, fontSize: 12, fontWeight: '700' },
   emptyState: { paddingVertical: 60, alignItems: 'center', gap: 8 },
   emptyTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   emptyText: { color: colors.textDim, fontSize: 13 },

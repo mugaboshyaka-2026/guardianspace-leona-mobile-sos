@@ -15,6 +15,7 @@ import { isAccessDeniedError, useAOIs, useMyEvents, useWorldEvents } from '../ho
 import { AppContext } from '../../App';
 import { deriveLocalRegion, filterEventsForConfig } from '../lib/locality';
 import { getProductConfig, limitEventsForProduct } from '../lib/products';
+import { getRealtimeStatus, onRealtimeStatusChange, retryRealtime } from '../lib/realtime';
 import { useAuth } from '../lib/auth';
 
 const mapsModule = Platform.OS === 'web'
@@ -53,6 +54,7 @@ const MapHomeScreen = ({ navigation }) => {
   const [layersVisible, setLayersVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState(getRealtimeStatus());
   const [layerStates, setLayerStates] = useState({
     wildfire: true,
     flood: true,
@@ -177,6 +179,8 @@ const MapHomeScreen = ({ navigation }) => {
   useEffect(() => {
     setMapMode(defaultMapMode);
   }, [defaultMapMode]);
+
+  useEffect(() => onRealtimeStatusChange(setRealtimeStatus), []);
 
   useEffect(() => {
     const region = searchRegion || (mapScope === 'LOCAL' ? localRegion : GLOBAL_REGION);
@@ -327,6 +331,20 @@ const MapHomeScreen = ({ navigation }) => {
           <Text style={styles.unavailableBannerText}>
             My monitoring is unavailable until you sign in with a valid account.
           </Text>
+        </View>
+      ) : null}
+
+      {realtimeStatus.state === 'offline' ? (
+        <View style={styles.realtimeBanner}>
+          <View style={styles.realtimeBannerCopy}>
+            <Text style={styles.realtimeBannerTitle}>Realtime offline</Text>
+            <Text style={styles.realtimeBannerText}>
+              {realtimeStatus.message || 'Live updates are unavailable right now.'}
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.realtimeBannerButton} onPress={() => retryRealtime().catch(() => {})}>
+            <Text style={styles.realtimeBannerButtonText}>Retry</Text>
+          </TouchableOpacity>
         </View>
       ) : null}
 
@@ -548,6 +566,34 @@ const styles = StyleSheet.create({
   },
   unavailableBannerTitle: { color: colors.text, fontSize: 12, fontWeight: '700' },
   unavailableBannerText: { color: colors.textSec, fontSize: 11, marginTop: 2 },
+  realtimeBanner: {
+    position: 'absolute',
+    top: 118,
+    left: spacing.lg,
+    right: 84,
+    backgroundColor: 'rgba(56,42,8,0.96)',
+    borderColor: 'rgba(255,184,77,0.28)',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    zIndex: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  realtimeBannerCopy: { flex: 1 },
+  realtimeBannerTitle: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  realtimeBannerText: { color: colors.textSec, fontSize: 11, marginTop: 2 },
+  realtimeBannerButton: {
+    borderRadius: 999,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  realtimeBannerButtonText: { color: colors.text, fontSize: 11, fontWeight: '700' },
   topBarRow2: {
     flexDirection: 'row',
     alignItems: 'center',
