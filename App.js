@@ -153,6 +153,12 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         ?? profile?.preferences?.defaultMapType
         ?? userConfig?.defaultMapType
         ?? '2D';
+      const persistedRefreshInterval = localPreferences?.refresh_interval
+        ?? localPreferences?.refreshInterval
+        ?? profile?.preferences?.refresh_interval
+        ?? profile?.preferences?.refreshInterval
+        ?? userConfig?.refreshInterval
+        ?? '1m';
       const persistedAois = aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean);
 
       if (!persistedAois.length) {
@@ -184,6 +190,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         showEventMarkers: Boolean(persistedShowMarkers),
         showRiskZones: Boolean(persistedShowRiskZones),
         defaultMapType: persistedDefaultMapType,
+        refreshInterval: persistedRefreshInterval,
         preferences: {
           ...(prev?.preferences || {}),
           ...(profile?.preferences || {}),
@@ -194,6 +201,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
           show_event_markers: Boolean(persistedShowMarkers),
           show_risk_zones: Boolean(persistedShowRiskZones),
           default_map_type: persistedDefaultMapType,
+          refresh_interval: persistedRefreshInterval,
         },
       }));
       console.log('[App] userConfig hydrated', {
@@ -207,6 +215,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         showEventMarkers: Boolean(persistedShowMarkers),
         showRiskZones: Boolean(persistedShowRiskZones),
         defaultMapType: persistedDefaultMapType,
+        refreshInterval: persistedRefreshInterval,
       });
     };
 

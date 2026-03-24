@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
-import { isAccessDeniedError, useAOIs, useMyEvents, useWorldEvents } from '../hooks/useEvents';
+import { getRefreshIntervalMs, isAccessDeniedError, useAOIs, useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { fetchMyFavorites } from '../lib/api';
 import LeonaHeader from '../components/LeonaHeader';
 import { AppContext } from '../../App';
@@ -56,6 +56,10 @@ const AlertsScreen = ({ navigation, route }) => {
   const [viewedAlerts, setViewedAlerts] = useState({});
   const [realtimeStatus, setRealtimeStatus] = useState(getRealtimeStatus());
   const [nowTs, setNowTs] = useState(Date.now());
+  const refreshIntervalMs = useMemo(
+    () => getRefreshIntervalMs(userConfig?.refreshInterval ?? userConfig?.preferences?.refresh_interval ?? '1m'),
+    [userConfig?.preferences?.refresh_interval, userConfig?.refreshInterval]
+  );
   const criticalOnlyEnabled = useMemo(
     () => Boolean(userConfig?.criticalOnly ?? userConfig?.preferences?.critical_only ?? userConfig?.preferences?.criticalOnly),
     [userConfig?.criticalOnly, userConfig?.preferences?.critical_only, userConfig?.preferences?.criticalOnly]
@@ -64,9 +68,9 @@ const AlertsScreen = ({ navigation, route }) => {
   const myDataRequiresAuth = authLoaded && !myDataAuthEnabled;
 
   // ── Live API data ──
-  const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents(myDataAuthEnabled);
+  const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents(myDataAuthEnabled, refreshIntervalMs);
   const { error: aoisError } = useAOIs(activeTab === 'MY' && myDataAuthEnabled);
-  const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents();
+  const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents(refreshIntervalMs);
   const myAlertsUnavailable = myDataRequiresAuth || isAccessDeniedError(myError) || isAccessDeniedError(aoisError);
   const filteredMyAlerts = useMemo(
     () => limitEventsForProduct(

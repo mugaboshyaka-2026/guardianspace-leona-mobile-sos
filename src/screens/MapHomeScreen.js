@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import BottomSheet from '@gorhom/bottom-sheet';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
-import { isAccessDeniedError, useAOIs, useMyEvents, useWorldEvents } from '../hooks/useEvents';
+import { getRefreshIntervalMs, isAccessDeniedError, useAOIs, useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
 import { fetchNewsRegional, isTimeoutError } from '../lib/api';
 import { deriveLocalRegion, filterEventsForConfig } from '../lib/locality';
@@ -76,11 +76,15 @@ const MapHomeScreen = ({ navigation }) => {
     const configuredMapMode = userConfig?.defaultMapType ?? userConfig?.preferences?.default_map_type ?? '2D';
     return MAP_MODE_OPTIONS.includes(configuredMapMode) ? configuredMapMode : '2D';
   }, [userConfig?.defaultMapType, userConfig?.preferences?.default_map_type]);
+  const refreshIntervalMs = useMemo(
+    () => getRefreshIntervalMs(userConfig?.refreshInterval ?? userConfig?.preferences?.refresh_interval ?? '1m'),
+    [userConfig?.preferences?.refresh_interval, userConfig?.refreshInterval]
+  );
   const [mapMode, setMapMode] = useState(defaultMapMode);
 
-  const { events: myEvents, error: myEventsError, refresh: refreshMyEvents } = useMyEvents(myDataAuthEnabled);
+  const { events: myEvents, error: myEventsError, refresh: refreshMyEvents } = useMyEvents(myDataAuthEnabled, refreshIntervalMs);
   const { error: aoisError } = useAOIs((mapScope === 'LOCAL' || activeTab === 'MY_ALERTS') && myDataAuthEnabled);
-  const { events: worldEvents, error: worldEventsError, refresh: refreshWorldEvents } = useWorldEvents();
+  const { events: worldEvents, error: worldEventsError, refresh: refreshWorldEvents } = useWorldEvents(refreshIntervalMs);
   const myDataUnavailable = myDataRequiresAuth || isAccessDeniedError(myEventsError) || isAccessDeniedError(aoisError);
   const timedOutMapRequest = (mapScope === 'LOCAL' || activeTab === 'MY_ALERTS')
     ? isTimeoutError(myEventsError) || isTimeoutError(aoisError)

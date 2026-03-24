@@ -16,6 +16,7 @@ import { updateUserProfile } from '../lib/api';
 import { mergeStoredSettingsPreferences } from '../lib/settingsPreferences';
 
 const MAP_TYPE_OPTIONS = ['2D', '3D', 'Satellite'];
+const REFRESH_INTERVAL_OPTIONS = ['30s', '1m', '5m', '15m'];
 
 const SettingsScreen = ({ navigation }) => {
   const { userConfig, setUserConfig } = useContext(AppContext);
@@ -43,6 +44,10 @@ const SettingsScreen = ({ navigation }) => {
     const configuredMapType = userConfig?.defaultMapType ?? userConfig?.preferences?.default_map_type ?? '2D';
     return MAP_TYPE_OPTIONS.includes(configuredMapType) ? configuredMapType : '2D';
   }, [userConfig?.defaultMapType, userConfig?.preferences?.default_map_type]);
+  const configuredRefreshInterval = useMemo(() => {
+    const savedRefreshInterval = userConfig?.refreshInterval ?? userConfig?.preferences?.refresh_interval ?? '1m';
+    return REFRESH_INTERVAL_OPTIONS.includes(savedRefreshInterval) ? savedRefreshInterval : '1m';
+  }, [userConfig?.preferences?.refresh_interval, userConfig?.refreshInterval]);
 
   const [emailDigest, setEmailDigest] = useState(false);
   const [highResImagery, setHighResImagery] = useState(false);
@@ -50,11 +55,15 @@ const SettingsScreen = ({ navigation }) => {
   const [dataSaverMode, setDataSaverMode] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
   const [mapType, setMapType] = useState(defaultMapType);
-  const [refreshInterval, setRefreshInterval] = useState('1m');
+  const [refreshInterval, setRefreshInterval] = useState(configuredRefreshInterval);
 
   useEffect(() => {
     setMapType(defaultMapType);
   }, [defaultMapType]);
+
+  useEffect(() => {
+    setRefreshInterval(configuredRefreshInterval);
+  }, [configuredRefreshInterval]);
 
   const handlePlanChange = (planId) => {
     setUserConfig((prev) => ({
@@ -117,6 +126,19 @@ const SettingsScreen = ({ navigation }) => {
     persistNotificationPreferences({ default_map_type: value });
   };
 
+  const handleRefreshIntervalChange = (value) => {
+    setRefreshInterval(value);
+    setUserConfig((prev) => ({
+      ...(prev || {}),
+      refreshInterval: value,
+      preferences: {
+        ...(prev?.preferences || {}),
+        refresh_interval: value,
+      },
+    }));
+    persistNotificationPreferences({ refresh_interval: value });
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -153,8 +175,8 @@ const SettingsScreen = ({ navigation }) => {
           <SelectorRow
             label="Auto-Refresh Interval"
             value={refreshInterval}
-            options={['30s', '1m', '5m', '15m']}
-            onSelect={setRefreshInterval}
+            options={REFRESH_INTERVAL_OPTIONS}
+            onSelect={handleRefreshIntervalChange}
           />
         </View>
 

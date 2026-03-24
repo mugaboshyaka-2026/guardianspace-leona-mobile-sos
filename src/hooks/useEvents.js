@@ -199,6 +199,21 @@ function isStale(key) {
   return !t || Date.now() - t > STALE_MS;
 }
 
+export function getRefreshIntervalMs(value) {
+  switch (value) {
+    case '30s':
+      return 30_000;
+    case '1m':
+      return 60_000;
+    case '5m':
+      return 300_000;
+    case '15m':
+      return 900_000;
+    default:
+      return 60_000;
+  }
+}
+
 export function isAccessDeniedError(error) {
   return error?.status === 401 || error?.status === 403;
 }
@@ -420,7 +435,7 @@ function cleanupWorldEventsRealtimeSubscription() {
 /**
  * useMyEvents — returns the user's AOI events.
  */
-export function useMyEvents(enabled = true) {
+export function useMyEvents(enabled = true, refreshIntervalMs = null) {
   const [events, setEvents] = useState(enabled ? myEventsStore.state.events : []);
   const [loading, setLoading] = useState(enabled ? (myEventsStore.state.loading || !cache.myEvents) : false);
   const [error, setError] = useState(enabled ? myEventsStore.state.error : null);
@@ -462,13 +477,25 @@ export function useMyEvents(enabled = true) {
     };
   }, [enabled]);
 
+  useEffect(() => {
+    if (!enabled || !refreshIntervalMs) {
+      return undefined;
+    }
+
+    const intervalId = setInterval(() => {
+      refreshMyEventsStore();
+    }, refreshIntervalMs);
+
+    return () => clearInterval(intervalId);
+  }, [enabled, refreshIntervalMs]);
+
   return { events, loading, error, refresh };
 }
 
 /**
  * useWorldEvents — returns top global events.
  */
-export function useWorldEvents() {
+export function useWorldEvents(refreshIntervalMs = null) {
   const [events, setEvents] = useState(worldEventsStore.state.events);
   const [loading, setLoading] = useState(worldEventsStore.state.loading || !cache.worldEvents);
   const [error, setError] = useState(worldEventsStore.state.error);
@@ -496,6 +523,18 @@ export function useWorldEvents() {
       cleanupWorldEventsRealtimeSubscription();
     };
   }, []);
+
+  useEffect(() => {
+    if (!refreshIntervalMs) {
+      return undefined;
+    }
+
+    const intervalId = setInterval(() => {
+      refreshWorldEventsStore();
+    }, refreshIntervalMs);
+
+    return () => clearInterval(intervalId);
+  }, [refreshIntervalMs]);
 
   return { events, loading, error, refresh };
 }
