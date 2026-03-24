@@ -49,6 +49,10 @@ const AlertsScreen = ({ navigation, route }) => {
   const { isLoaded: authLoaded, isSignedIn, authReady } = useAuth();
   const [activeTab, setActiveTab] = useState('MY');
   const [viewedAlerts, setViewedAlerts] = useState({});
+  const criticalOnlyEnabled = useMemo(
+    () => Boolean(userConfig?.criticalOnly ?? userConfig?.preferences?.critical_only ?? userConfig?.preferences?.criticalOnly),
+    [userConfig?.criticalOnly, userConfig?.preferences?.critical_only, userConfig?.preferences?.criticalOnly]
+  );
   const myDataAuthEnabled = isSignedIn && authReady;
   const myDataRequiresAuth = authLoaded && !myDataAuthEnabled;
 
@@ -128,10 +132,15 @@ const AlertsScreen = ({ navigation, route }) => {
     : activeTab === 'GLOBAL' ? globalEvents
     : []; // FAVORITES uses its own list
   const severityFilteredEvents = useMemo(() => (
-    userConfig?.criticalOnly
+    criticalOnlyEnabled
       ? currentEvents.filter((event) => event?.severity === 'critical')
       : currentEvents
-  ), [currentEvents, userConfig?.criticalOnly]);
+  ), [criticalOnlyEnabled, currentEvents]);
+  const filteredFavorites = useMemo(() => (
+    criticalOnlyEnabled
+      ? favorites.filter((favorite) => (favorite?.event_data?.severity || favorite?.severity) === 'critical')
+      : favorites
+  ), [criticalOnlyEnabled, favorites]);
   const orderedEvents = useMemo(() => sortEventsNewestFirst(severityFilteredEvents), [severityFilteredEvents]);
   const viewedIds = useMemo(() => new Set(Object.keys(viewedAlerts || {})), [viewedAlerts]);
   const activeEvents = useMemo(() => {
@@ -168,13 +177,13 @@ const AlertsScreen = ({ navigation, route }) => {
       configuredEventTypes: userConfig?.eventTypes || [],
       configuredRadius: userConfig?.radius || null,
       configuredAois: userConfig?.aois || [],
-      criticalOnly: Boolean(userConfig?.criticalOnly),
+      criticalOnly: criticalOnlyEnabled,
       sourceMyAlertsCount: myAlerts.length,
       sourceWorldEventsCount: worldEvents.length,
       filteredMyAlertsCount: filteredMyAlerts.length,
       globalEventsCount: globalEvents.length,
     });
-  }, [activeTab, filteredMyAlerts.length, globalEvents.length, myAlerts.length, userConfig, worldEvents.length]);
+  }, [activeTab, criticalOnlyEnabled, filteredMyAlerts.length, globalEvents.length, myAlerts.length, userConfig, worldEvents.length]);
 
   const handleAlertPress = async (event) => {
     await markAlertViewed(event).catch((err) => {
@@ -223,7 +232,7 @@ const AlertsScreen = ({ navigation, route }) => {
         right={
           <View style={styles.totalBadge}>
             <Text style={styles.totalBadgeText}>
-              {activeTab === 'FAVORITES' ? favorites.length : currentEvents.length}
+              {activeTab === 'FAVORITES' ? filteredFavorites.length : severityFilteredEvents.length}
             </Text>
           </View>
         }
@@ -338,7 +347,7 @@ const AlertsScreen = ({ navigation, route }) => {
             <ActivityIndicator color={colors.blue} style={{ paddingVertical: 40 }} />
           )}
 
-          {!favLoading && favorites.length > 0 && favorites.map((fav) => {
+          {!favLoading && filteredFavorites.length > 0 && filteredFavorites.map((fav) => {
             const event = fav.event_data || fav;
             const savedDate = fav.created_at ? getTimeSince(fav.created_at) : '';
             return (
@@ -360,11 +369,11 @@ const AlertsScreen = ({ navigation, route }) => {
             );
           })}
 
-          {!favLoading && favorites.length === 0 && (
+          {!favLoading && filteredFavorites.length === 0 && (
             <View style={styles.emptyState}>
               <Text style={styles.favEmptyIcon}>★</Text>
-              <Text style={styles.emptyText}>No favorites yet</Text>
-              <Text style={styles.favHint}>Tap ★ on any event to save it here</Text>
+              <Text style={styles.emptyText}>{criticalOnlyEnabled ? 'No critical favorites yet' : 'No favorites yet'}</Text>
+              <Text style={styles.favHint}>{criticalOnlyEnabled ? 'Critical Alerts Only is enabled.' : 'Tap ★ on any event to save it here'}</Text>
             </View>
           )}
 

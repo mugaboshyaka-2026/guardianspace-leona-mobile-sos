@@ -3,7 +3,7 @@
  * Centralizes API calls + caching so Map, Alerts, Briefs screens
  * all share the same data without redundant fetches.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   fetchMyEvents,
   fetchWorldEvents,
@@ -31,6 +31,7 @@ const cache = {
 };
 
 const STALE_MS = 60_000; // 1 min
+const REALTIME_REFRESH_DEBOUNCE_MS = 1500;
 const subscribedAoiIds = new Set();
 const initialLeonaMessages = [
   {
@@ -213,6 +214,9 @@ export function useMyEvents(enabled = true) {
   const [events, setEvents] = useState(cache.myEvents || []);
   const [loading, setLoading] = useState(enabled && !cache.myEvents);
   const [error, setError] = useState(null);
+  const refreshTimeoutRef = useRef(null);
+  const refreshInFlightRef = useRef(false);
+  const pendingRefreshRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!enabled) {
@@ -221,6 +225,11 @@ export function useMyEvents(enabled = true) {
       setError(null);
       return;
     }
+    if (refreshInFlightRef.current) {
+      pendingRefreshRef.current = true;
+      return;
+    }
+    refreshInFlightRef.current = true;
     setLoading(true);
     setError(null);
     try {
@@ -233,9 +242,29 @@ export function useMyEvents(enabled = true) {
       setError(err);
       setEvents([]);
     } finally {
+      refreshInFlightRef.current = false;
       setLoading(false);
+      if (pendingRefreshRef.current) {
+        pendingRefreshRef.current = false;
+        refreshTimeoutRef.current = setTimeout(() => {
+          refreshTimeoutRef.current = null;
+          refresh();
+        }, 0);
+      }
     }
   }, [enabled]);
+
+  const scheduleRefresh = useCallback(() => {
+    pendingRefreshRef.current = true;
+    if (refreshTimeoutRef.current) {
+      return;
+    }
+    refreshTimeoutRef.current = setTimeout(() => {
+      refreshTimeoutRef.current = null;
+      pendingRefreshRef.current = false;
+      refresh();
+    }, REALTIME_REFRESH_DEBOUNCE_MS);
+  }, [refresh]);
 
   useEffect(() => {
     if (isStale('myEvents')) refresh();
@@ -254,7 +283,7 @@ export function useMyEvents(enabled = true) {
           cache.lastFetch.myEvents = Date.now();
           return next;
         });
-        refresh();
+        scheduleRefresh();
       }
 
       if ((msg.type === 'new' || msg.type === 'update') && msg.event) {
@@ -264,11 +293,17 @@ export function useMyEvents(enabled = true) {
           cache.lastFetch.myEvents = Date.now();
           return next;
         });
-        refresh();
+        scheduleRefresh();
       }
     });
-    return unsub;
-  }, [enabled, refresh]);
+    return () => {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = null;
+      }
+      unsub();
+    };
+  }, [enabled, scheduleRefresh]);
 
   return { events, loading, error, refresh };
 }
@@ -280,8 +315,16 @@ export function useWorldEvents() {
   const [events, setEvents] = useState(cache.worldEvents || []);
   const [loading, setLoading] = useState(!cache.worldEvents);
   const [error, setError] = useState(null);
+  const refreshTimeoutRef = useRef(null);
+  const refreshInFlightRef = useRef(false);
+  const pendingRefreshRef = useRef(false);
 
   const refresh = useCallback(async () => {
+    if (refreshInFlightRef.current) {
+      pendingRefreshRef.current = true;
+      return;
+    }
+    refreshInFlightRef.current = true;
     setLoading(true);
     setError(null);
     try {
@@ -294,9 +337,29 @@ export function useWorldEvents() {
       setError(err);
       setEvents([]);
     } finally {
+      refreshInFlightRef.current = false;
       setLoading(false);
+      if (pendingRefreshRef.current) {
+        pendingRefreshRef.current = false;
+        refreshTimeoutRef.current = setTimeout(() => {
+          refreshTimeoutRef.current = null;
+          refresh();
+        }, 0);
+      }
     }
   }, []);
+
+  const scheduleRefresh = useCallback(() => {
+    pendingRefreshRef.current = true;
+    if (refreshTimeoutRef.current) {
+      return;
+    }
+    refreshTimeoutRef.current = setTimeout(() => {
+      refreshTimeoutRef.current = null;
+      pendingRefreshRef.current = false;
+      refresh();
+    }, REALTIME_REFRESH_DEBOUNCE_MS);
+  }, [refresh]);
 
   useEffect(() => {
     if (isStale('worldEvents')) refresh();
@@ -304,10 +367,16 @@ export function useWorldEvents() {
 
   useEffect(() => {
     const unsub = onEventUpdate((msg) => {
-      if (msg.type === 'new' || msg.type === 'update') refresh();
+      if (msg.type === 'new' || msg.type === 'update') scheduleRefresh();
     });
-    return unsub;
-  }, [refresh]);
+    return () => {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = null;
+      }
+      unsub();
+    };
+  }, [scheduleRefresh]);
 
   return { events, loading, error, refresh };
 }
