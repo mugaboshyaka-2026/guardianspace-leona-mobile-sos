@@ -55,6 +55,7 @@ const CommunityScreen = ({ navigation }) => {
   const [postText, setPostText] = useState('');
   const [postSelectedTags, setPostSelectedTags] = useState([]);
   const [postsLoaded, setPostsLoaded] = useState(false);
+  const [publishNotice, setPublishNotice] = useState('');
 
   // ── INBOX state
   const [inboxTab, setInboxTab] = useState('ALL');
@@ -140,6 +141,7 @@ const CommunityScreen = ({ navigation }) => {
     setPostText('');
     setPostSelectedTags([]);
     setShowNewPost(false);
+    setPublishNotice('Saved on this device only. Community sync is unavailable, so this post was not published to other users.');
   };
 
   const renderPost = ({ item }) => (
@@ -203,6 +205,13 @@ const CommunityScreen = ({ navigation }) => {
           Community posts persist on this device after refresh, but they are not synced to other users yet.
         </Text>
       </View>
+
+      {!!publishNotice && (
+        <View style={styles.publishNoticeBanner}>
+          <Text style={styles.publishNoticeTitle}>Not published to community</Text>
+          <Text style={styles.publishNoticeText}>{publishNotice}</Text>
+        </View>
+      )}
 
       {/* Compose prompt */}
       <TouchableOpacity style={styles.composePrompt} onPress={() => setShowNewPost(true)}>
@@ -526,12 +535,19 @@ const CommunityScreen = ({ navigation }) => {
               })}
             </View>
 
+            <View style={styles.modalWarningBox}>
+              <Text style={styles.modalWarningTitle}>Demo-only publishing</Text>
+              <Text style={styles.modalWarningText}>
+                This build saves posts locally on this device. It does not publish them to the shared community feed yet.
+              </Text>
+            </View>
+
             <TouchableOpacity
               style={[styles.publishBtn, !postText.trim() && styles.publishBtnDisabled]}
               onPress={handlePublishPost}
               disabled={!postText.trim()}
             >
-              <Text style={styles.publishBtnText}>PUBLISH TO FEED</Text>
+              <Text style={styles.publishBtnText}>SAVE TO LOCAL FEED</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -751,6 +767,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   persistenceBannerText: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  publishNoticeBanner: {
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,120,120,0.22)',
+    backgroundColor: 'rgba(96,24,24,0.24)',
+  },
+  publishNoticeTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  publishNoticeText: {
     color: colors.textSec,
     fontSize: 12,
     lineHeight: 18,
@@ -1090,6 +1126,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   tagChipText: { fontSize: 11, fontWeight: '600' },
+  modalWarningBox: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,184,77,0.2)',
+    backgroundColor: 'rgba(255,184,77,0.08)',
+  },
+  modalWarningTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  modalWarningText: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
 
   // New Message modal specific
   fieldInput: {
