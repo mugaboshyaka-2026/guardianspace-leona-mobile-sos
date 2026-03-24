@@ -13,8 +13,6 @@ import { useAuth } from '../lib/auth';
 import { useProfile } from '../hooks/useEvents';
 import { AppContext } from '../../App';
 
-const MASKED_API_KEY = 'gs_live_••••••••7x4f';
-
 const ProfileScreen = ({ navigation }) => {
   const [copyState, setCopyState] = useState('idle');
   const [copyMessage, setCopyMessage] = useState('');
@@ -36,13 +34,29 @@ const ProfileScreen = ({ navigation }) => {
     if (parts.length === 0) return 'U';
     return parts.slice(0, 2).map((part) => part[0]).join('').toUpperCase();
   }, [displayName]);
-  const apiKeyValue = apiProfile?.api_key || apiProfile?.apiKey || userConfig?.apiKey || '';
-  const maskedApiKey = apiKeyValue || MASKED_API_KEY;
+  const configSources = [apiProfile, apiProfile?.settings, apiProfile?.preferences, userConfig, userConfig?.settings, userConfig?.preferences]
+    .filter(Boolean);
+  const getConfigValue = (...keys) => {
+    for (const source of configSources) {
+      for (const key of keys) {
+        const value = source?.[key];
+        if (typeof value === 'string' && value.trim()) {
+          return value.trim();
+        }
+      }
+    }
+    return '';
+  };
+  const apiKeyValue = getConfigValue('api_key', 'apiKey');
+  const webhookUrlValue = getConfigValue('webhook_url', 'webhookUrl');
+  const maskedApiKey = apiKeyValue
+    ? `${apiKeyValue.slice(0, Math.min(8, apiKeyValue.length))}${apiKeyValue.length > 12 ? `••••${apiKeyValue.slice(-4)}` : ''}`
+    : 'Not configured';
 
   const copyToClipboard = async () => {
     if (!apiKeyValue) {
       setCopyState('error');
-      setCopyMessage('Full API key is not available in this build, so there is nothing to copy.');
+      setCopyMessage('No API key is configured for this account.');
       return;
     }
 
@@ -142,7 +156,7 @@ const ProfileScreen = ({ navigation }) => {
               {copyMessage}
             </Text>
           )}
-          <InfoRow label="Webhook URL" value="https://api.guardian..." isUrl />
+          <InfoRow label="Webhook URL" value={webhookUrlValue || 'Not configured'} isUrl />
           <View style={styles.infoRow}>
             <View style={styles.infoLabel}>
               <Text style={styles.infoText}>Requests Today</Text>
