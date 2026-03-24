@@ -8,6 +8,8 @@ import {
   ScrollView,
   Switch,
   Platform,
+  FlatList,
+  ActivityIndicator,
 } from 'react-native';
 import BottomSheet from '@gorhom/bottom-sheet';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
@@ -318,6 +320,43 @@ const MapHomeScreen = ({ navigation }) => {
     }
     refreshWorldEvents().catch(() => {});
   }, [activeTab, mapScope, refreshMyEvents, refreshWorldEvents]);
+  const renderEventCard = useCallback(({ item: event }) => (
+    <TouchableOpacity
+      onPress={() => handleCardPress(event)}
+      activeOpacity={0.7}
+      style={styles.card}
+    >
+      <View style={styles.cardIcon}>
+        <Text style={styles.cardIconText}>{typeIcons[event.type] || 'o'}</Text>
+      </View>
+      <View style={styles.cardContent}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle} numberOfLines={2}>{event.title}</Text>
+          <View style={[styles.severityBadge, { backgroundColor: sevColors[event.severity] }]}>
+            <Text style={styles.severityText}>{event.severity.toUpperCase()}</Text>
+          </View>
+        </View>
+        <Text style={styles.cardLocation} numberOfLines={1}>{event.location}</Text>
+      </View>
+    </TouchableOpacity>
+  ), [handleCardPress]);
+  const renderNewsCard = useCallback(({ item: article }) => (
+    <View style={styles.newsCard}>
+      <Text style={styles.newsCardTitle} numberOfLines={2}>
+        {article.title || article.headline || 'Regional news update'}
+      </Text>
+      <Text style={styles.newsCardMeta} numberOfLines={1}>
+        {[article.source, article.location, article.region].filter(Boolean).join(' · ') || 'Regional feed'}
+      </Text>
+      <Text style={styles.newsCardSummary} numberOfLines={3}>
+        {article.summary || article.snippet || article.description || 'Open the full feed for more detail.'}
+      </Text>
+    </View>
+  ), []);
+  const renderBottomSheetItemSeparator = useCallback(
+    () => <View style={styles.listSeparator} />,
+    []
+  );
 
   return (
     <View style={styles.container}>
@@ -565,82 +604,70 @@ const MapHomeScreen = ({ navigation }) => {
             ))}
           </View>
 
-          <View style={styles.cardsContainer}>
-            {showBottomSheetMyDataUnavailable ? (
+          {showBottomSheetMyDataUnavailable ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateTitle}>Sign in required</Text>
+              <Text style={styles.emptyStateText}>
+                This screen is not showing fallback My Alert data while you are signed out.
+              </Text>
+            </View>
+          ) : activeTab === 'NEWS' ? (
+            newsLoading ? (
+              <ActivityIndicator color={colors.blue} style={styles.bottomSheetLoader} />
+            ) : newsError ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateTitle}>Sign in required</Text>
+                <Text style={styles.emptyStateTitle}>{isTimeoutError(newsError) ? 'Request timed out' : 'News unavailable'}</Text>
                 <Text style={styles.emptyStateText}>
-                  This screen is not showing fallback My Alert data while you are signed out.
+                  {isTimeoutError(newsError)
+                    ? 'Regional news took too long to load. Check your connection and retry.'
+                    : 'Regional news could not be loaded right now.'}
                 </Text>
               </View>
-            ) : activeTab === 'NEWS' ? (
-              newsLoading ? (
-                <ActivityIndicator color={colors.blue} style={styles.bottomSheetLoader} />
-              ) : newsError ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyStateTitle}>{isTimeoutError(newsError) ? 'Request timed out' : 'News unavailable'}</Text>
-                  <Text style={styles.emptyStateText}>
-                    {isTimeoutError(newsError)
-                      ? 'Regional news took too long to load. Check your connection and retry.'
-                      : 'Regional news could not be loaded right now.'}
-                  </Text>
-                </View>
-              ) : newsItems.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyStateText}>No news items are available right now.</Text>
-                </View>
-              ) : (
-                newsItems.map((article, index) => (
-                  <View key={article.id || article.url || `news-${index}`} style={styles.newsCard}>
-                    <Text style={styles.newsCardTitle} numberOfLines={2}>
-                      {article.title || article.headline || 'Regional news update'}
-                    </Text>
-                    <Text style={styles.newsCardMeta} numberOfLines={1}>
-                      {[article.source, article.location, article.region].filter(Boolean).join(' · ') || 'Regional feed'}
-                    </Text>
-                    <Text style={styles.newsCardSummary} numberOfLines={3}>
-                      {article.summary || article.snippet || article.description || 'Open the full feed for more detail.'}
-                    </Text>
-                  </View>
-                ))
-              )
-            ) : activeTab === 'COMMUNITY' ? (
+            ) : newsItems.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateTitle}>Community unavailable here</Text>
-                <Text style={styles.emptyStateText}>
-                  Open the dedicated Community tab to view or publish community posts. The map sheet does not embed that feed yet.
-                </Text>
-              </View>
-            ) : filteredEvents.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyStateText}>
-                  {normalizedSearchText ? 'No events match this search' : 'No events'}
-                </Text>
+                <Text style={styles.emptyStateText}>No news items are available right now.</Text>
               </View>
             ) : (
-              filteredEvents.map((event) => (
-                <TouchableOpacity
-                  key={event.id}
-                  onPress={() => handleCardPress(event)}
-                  activeOpacity={0.7}
-                  style={styles.card}
-                >
-                  <View style={styles.cardIcon}>
-                    <Text style={styles.cardIconText}>{typeIcons[event.type] || 'o'}</Text>
-                  </View>
-                  <View style={styles.cardContent}>
-                    <View style={styles.cardHeader}>
-                      <Text style={styles.cardTitle} numberOfLines={2}>{event.title}</Text>
-                      <View style={[styles.severityBadge, { backgroundColor: sevColors[event.severity] }]}>
-                        <Text style={styles.severityText}>{event.severity.toUpperCase()}</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.cardLocation} numberOfLines={1}>{event.location}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))
-            )}
-          </View>
+              <FlatList
+                data={newsItems}
+                renderItem={renderNewsCard}
+                keyExtractor={(item, index) => String(item.id || item.url || `news-${index}`)}
+                contentContainerStyle={styles.cardsContainer}
+                ItemSeparatorComponent={renderBottomSheetItemSeparator}
+                showsVerticalScrollIndicator={false}
+                removeClippedSubviews
+                initialNumToRender={8}
+                maxToRenderPerBatch={8}
+                windowSize={7}
+              />
+            )
+          ) : activeTab === 'COMMUNITY' ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateTitle}>Community unavailable here</Text>
+              <Text style={styles.emptyStateText}>
+                Open the dedicated Community tab to view or publish community posts. The map sheet does not embed that feed yet.
+              </Text>
+            </View>
+          ) : filteredEvents.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateText}>
+                {normalizedSearchText ? 'No events match this search' : 'No events'}
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={filteredEvents}
+              renderItem={renderEventCard}
+              keyExtractor={(item) => String(item.id)}
+              contentContainerStyle={styles.cardsContainer}
+              ItemSeparatorComponent={renderBottomSheetItemSeparator}
+              showsVerticalScrollIndicator={false}
+              removeClippedSubviews
+              initialNumToRender={10}
+              maxToRenderPerBatch={10}
+              windowSize={7}
+            />
+          )}
         </View>
       </BottomSheet>
     </View>
@@ -998,7 +1025,8 @@ const styles = StyleSheet.create({
   tabActive: { borderBottomColor: colors.blue },
   tabText: { color: colors.textDim, fontSize: 12, fontWeight: '600' },
   tabTextActive: { color: colors.blue },
-  cardsContainer: { gap: spacing.md },
+  cardsContainer: { paddingBottom: spacing.xl },
+  listSeparator: { height: spacing.md },
   bottomSheetLoader: { paddingVertical: spacing.xxl },
   emptyStateTitle: { color: colors.text, fontSize: 14, fontWeight: '700', marginBottom: spacing.xs },
   card: {
@@ -1047,3 +1075,4 @@ const styles = StyleSheet.create({
 });
 
 export default MapHomeScreen;
+
