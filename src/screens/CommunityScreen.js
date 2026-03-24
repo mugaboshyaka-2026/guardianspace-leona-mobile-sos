@@ -11,6 +11,7 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import LeonaHeader from '../components/LeonaHeader';
@@ -44,6 +45,8 @@ const SUGGESTED_CONTACTS = [
   'LEONA System',
 ];
 
+const MAX_COMMUNITY_POST_LENGTH = 1000;
+
 // ─── COMMUNITY SCREEN ─────────────────────────────────────────────────────────
 const CommunityScreen = ({ navigation }) => {
   // ── Top-level section
@@ -56,6 +59,7 @@ const CommunityScreen = ({ navigation }) => {
   const [postSelectedTags, setPostSelectedTags] = useState([]);
   const [postsLoaded, setPostsLoaded] = useState(false);
   const [publishNotice, setPublishNotice] = useState('');
+  const [postError, setPostError] = useState('');
 
   // ── INBOX state
   const [inboxTab, setInboxTab] = useState('ALL');
@@ -124,7 +128,18 @@ const CommunityScreen = ({ navigation }) => {
   };
 
   const handlePublishPost = () => {
-    if (!postText.trim()) return;
+    if (!postText.trim()) {
+      setPostError('Post text is required.');
+      return;
+    }
+
+    if (postText.length > MAX_COMMUNITY_POST_LENGTH) {
+      const message = `Posts must be ${MAX_COMMUNITY_POST_LENGTH} characters or fewer.`;
+      setPostError(message);
+      Alert.alert('Post too long', message);
+      return;
+    }
+
     const newPost = {
       id: Date.now().toString(),
       author: 'You',
@@ -141,6 +156,7 @@ const CommunityScreen = ({ navigation }) => {
     setPostText('');
     setPostSelectedTags([]);
     setShowNewPost(false);
+    setPostError('');
     setPublishNotice('Saved on this device only. Community sync is unavailable, so this post was not published to other users.');
   };
 
@@ -214,7 +230,10 @@ const CommunityScreen = ({ navigation }) => {
       )}
 
       {/* Compose prompt */}
-      <TouchableOpacity style={styles.composePrompt} onPress={() => setShowNewPost(true)}>
+      <TouchableOpacity style={styles.composePrompt} onPress={() => {
+        setPostError('');
+        setShowNewPost(true);
+      }}>
         <View style={styles.composePromptAvatar}>
           <Text style={styles.avatarInitials}>YO</Text>
         </View>
@@ -476,7 +495,10 @@ const CommunityScreen = ({ navigation }) => {
         visible={showNewPost}
         transparent
         animationType="slide"
-        onRequestClose={() => setShowNewPost(false)}
+        onRequestClose={() => {
+          setPostError('');
+          setShowNewPost(false);
+        }}
       >
         <KeyboardAvoidingView
           style={{ flex: 1 }}
@@ -486,7 +508,7 @@ const CommunityScreen = ({ navigation }) => {
           <View style={styles.composeModal}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>NEW POST</Text>
-              <TouchableOpacity onPress={() => setShowNewPost(false)}>
+              <TouchableOpacity onPress={() => { setPostError(''); setShowNewPost(false); }}>
                 <Text style={styles.modalClose}>✕</Text>
               </TouchableOpacity>
             </View>
@@ -508,11 +530,22 @@ const CommunityScreen = ({ navigation }) => {
               placeholder="Share an update, intelligence note, or observation..."
               placeholderTextColor={colors.textDim}
               value={postText}
-              onChangeText={setPostText}
+              onChangeText={(value) => {
+                if (postError) {
+                  setPostError('');
+                }
+                setPostText(value);
+              }}
               multiline
               textAlignVertical="top"
               autoFocus
+              maxLength={MAX_COMMUNITY_POST_LENGTH}
             />
+            <View style={styles.postMetaRow}>
+              <Text style={styles.postMetaText}>
+                {postText.length}/{MAX_COMMUNITY_POST_LENGTH}
+              </Text>
+            </View>
 
             {/* Tag selector */}
             <Text style={styles.modalSectionLabel}>ADD TAGS</Text>
@@ -542,10 +575,15 @@ const CommunityScreen = ({ navigation }) => {
               </Text>
             </View>
 
+            {postError ? <Text style={styles.postErrorText}>{postError}</Text> : null}
+
             <TouchableOpacity
-              style={[styles.publishBtn, !postText.trim() && styles.publishBtnDisabled]}
+              style={[
+                styles.publishBtn,
+                (!postText.trim() || postText.length > MAX_COMMUNITY_POST_LENGTH) && styles.publishBtnDisabled,
+              ]}
               onPress={handlePublishPost}
-              disabled={!postText.trim()}
+              disabled={!postText.trim() || postText.length > MAX_COMMUNITY_POST_LENGTH}
             >
               <Text style={styles.publishBtnText}>SAVE TO LOCAL FEED</Text>
             </TouchableOpacity>
@@ -1105,6 +1143,21 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     marginBottom: spacing.lg,
     paddingTop: 0,
+  },
+  postMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: -spacing.md,
+    marginBottom: spacing.lg,
+  },
+  postMetaText: {
+    color: colors.textDim,
+    fontSize: 11,
+  },
+  postErrorText: {
+    color: colors.critical,
+    fontSize: 12,
+    marginBottom: spacing.md,
   },
   modalSectionLabel: {
     color: colors.textDim,
