@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -14,6 +14,15 @@ import {
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import LeonaHeader from '../components/LeonaHeader';
+
+let SecureStore = null;
+try {
+  SecureStore = require('expo-secure-store');
+} catch {
+  SecureStore = null;
+}
+
+const COMMUNITY_POSTS_STORAGE_KEY = 'leona_community_posts_v1';
 
 // ─── INITIAL DATA ──────────────────────────────────────────────────────────────
 const INITIAL_POSTS = [];
@@ -45,6 +54,7 @@ const CommunityScreen = ({ navigation }) => {
   const [showNewPost, setShowNewPost] = useState(false);
   const [postText, setPostText] = useState('');
   const [postSelectedTags, setPostSelectedTags] = useState([]);
+  const [postsLoaded, setPostsLoaded] = useState(false);
 
   // ── INBOX state
   const [inboxTab, setInboxTab] = useState('ALL');
@@ -56,6 +66,52 @@ const CommunityScreen = ({ navigation }) => {
 
   // Unread count for badge
   const unreadCount = threads.filter((t) => t.unread).length;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadStoredPosts = async () => {
+      if (!SecureStore?.getItemAsync) {
+        setPostsLoaded(true);
+        return;
+      }
+
+      try {
+        const raw = await SecureStore.getItemAsync(COMMUNITY_POSTS_STORAGE_KEY);
+        if (cancelled) {
+          return;
+        }
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            setPosts(parsed);
+          }
+        }
+      } catch (err) {
+        console.warn('[LEONA Community] Stored posts load failed:', err.message);
+      } finally {
+        if (!cancelled) {
+          setPostsLoaded(true);
+        }
+      }
+    };
+
+    loadStoredPosts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!postsLoaded || !SecureStore?.setItemAsync) {
+      return;
+    }
+
+    SecureStore.setItemAsync(COMMUNITY_POSTS_STORAGE_KEY, JSON.stringify(posts)).catch((err) => {
+      console.warn('[LEONA Community] Stored posts save failed:', err.message);
+    });
+  }, [posts, postsLoaded]);
 
   // ── FEED helpers ─────────────────────────────────────────────────────────────
   const togglePostTag = (tag) => {
@@ -141,6 +197,13 @@ const CommunityScreen = ({ navigation }) => {
 
   const renderFeed = () => (
     <>
+      <View style={styles.persistenceBanner}>
+        <Text style={styles.persistenceBannerTitle}>Local demo feed</Text>
+        <Text style={styles.persistenceBannerText}>
+          Community posts persist on this device after refresh, but they are not synced to other users yet.
+        </Text>
+      </View>
+
       {/* Compose prompt */}
       <TouchableOpacity style={styles.composePrompt} onPress={() => setShowNewPost(true)}>
         <View style={styles.composePromptAvatar}>
@@ -178,6 +241,13 @@ const CommunityScreen = ({ navigation }) => {
         renderItem={renderPost}
         keyExtractor={(item) => item.id}
         ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+        ListEmptyComponent={() => (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyIcon}>✎</Text>
+            <Text style={styles.emptyText}>No posts yet</Text>
+            <Text style={styles.emptyHint}>Published posts stay on this device only until community sync is implemented.</Text>
+          </View>
+        )}
         ListFooterComponent={() => <View style={{ height: spacing.xl }} />}
       />
     </>
@@ -664,6 +734,27 @@ const styles = StyleSheet.create({
   },
 
   // ── FEED ────────────────────────────────────────────────────
+  persistenceBanner: {
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(74,144,255,0.22)',
+    backgroundColor: 'rgba(74,144,255,0.1)',
+  },
+  persistenceBannerTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 4,
+    letterSpacing: 0.4,
+  },
+  persistenceBannerText: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
   composePrompt: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -916,6 +1007,13 @@ const styles = StyleSheet.create({
   emptyText: { color: colors.textDim, fontSize: 14 },
 
   // ── Modals (shared) ─────────────────────────────────────────
+  emptyHint: {
+    color: colors.textDim,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
