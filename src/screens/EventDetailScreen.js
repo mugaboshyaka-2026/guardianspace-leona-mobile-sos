@@ -12,7 +12,7 @@ import {
   Modal,
 } from 'react-native';
 import { colors, sevColors, typeIcons, spacing, fonts, sevBg } from '../theme';
-import { getRelatedNews, addFavorite, removeFavorite, checkFavorite } from '../lib/api';
+import { getRelatedNews, addFavorite, removeFavorite, checkFavorite, isTimeoutError } from '../lib/api';
 
 const mapsModule = Platform.OS === 'web' ? null : require('react-native-maps');
 const MapView = mapsModule?.default;
@@ -77,6 +77,7 @@ const EventDetailScreen = ({ route, navigation }) => {
   const [relatedNews, setRelatedNews] = useState([]);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState(null);
+  const [newsTimedOut, setNewsTimedOut] = useState(false);
 
   const loadRelatedNews = useCallback(async () => {
     if (!event?.id) {
@@ -85,10 +86,12 @@ const EventDetailScreen = ({ route, navigation }) => {
 
     setNewsLoading(true);
     setNewsError(null);
+    setNewsTimedOut(false);
     try {
       const data = await getRelatedNews(event.id);
       setRelatedNews(data?.articles || []);
     } catch (err) {
+      setNewsTimedOut(isTimeoutError(err));
       setNewsError(err?.message || 'Related coverage could not be loaded.');
       console.warn('[EventDetail] Related news failed:', err.message);
     } finally {
@@ -106,6 +109,7 @@ const EventDetailScreen = ({ route, navigation }) => {
   useEffect(() => {
     setRelatedNews([]);
     setNewsError(null);
+    setNewsTimedOut(false);
     setNewsLoading(false);
   }, [event?.id]);
 
@@ -432,9 +436,11 @@ const EventDetailScreen = ({ route, navigation }) => {
         <ActivityIndicator color={colors.blue} style={{ paddingVertical: 40 }} />
       ) : newsError ? (
         <View style={styles.emptyStateCard}>
-          <Text style={styles.emptyStateTitle}>Related coverage unavailable</Text>
+          <Text style={styles.emptyStateTitle}>{newsTimedOut ? 'Request timed out' : 'Related coverage unavailable'}</Text>
           <Text style={styles.placeholderText}>
-            We could not load related news for this event. Check your connection and try again.
+            {newsTimedOut
+              ? 'Related coverage took too long to load. Check your connection and retry.'
+              : 'We could not load related news for this event. Check your connection and try again.'}
           </Text>
           <Text style={styles.errorDetailText}>{newsError}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={loadRelatedNews}>

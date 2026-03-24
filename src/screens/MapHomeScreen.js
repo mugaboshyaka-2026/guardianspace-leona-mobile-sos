@@ -13,6 +13,7 @@ import BottomSheet from '@gorhom/bottom-sheet';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
 import { isAccessDeniedError, useAOIs, useMyEvents, useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
+import { isTimeoutError } from '../lib/api';
 import { deriveLocalRegion, filterEventsForConfig } from '../lib/locality';
 import { getProductConfig, limitEventsForProduct } from '../lib/products';
 import { getRealtimeStatus, onRealtimeStatusChange, retryRealtime } from '../lib/realtime';
@@ -74,10 +75,13 @@ const MapHomeScreen = ({ navigation }) => {
   }, [userConfig?.defaultMapType, userConfig?.preferences?.default_map_type]);
   const [mapMode, setMapMode] = useState(defaultMapMode);
 
-  const { events: myEvents, error: myEventsError } = useMyEvents(myDataAuthEnabled);
+  const { events: myEvents, error: myEventsError, refresh: refreshMyEvents } = useMyEvents(myDataAuthEnabled);
   const { error: aoisError } = useAOIs((mapScope === 'LOCAL' || activeTab === 'MY_ALERTS') && myDataAuthEnabled);
-  const { events: worldEvents } = useWorldEvents();
+  const { events: worldEvents, error: worldEventsError, refresh: refreshWorldEvents } = useWorldEvents();
   const myDataUnavailable = myDataRequiresAuth || isAccessDeniedError(myEventsError) || isAccessDeniedError(aoisError);
+  const timedOutMapRequest = (mapScope === 'LOCAL' || activeTab === 'MY_ALERTS')
+    ? isTimeoutError(myEventsError) || isTimeoutError(aoisError)
+    : isTimeoutError(worldEventsError);
   const showEventMarkers = userConfig?.showEventMarkers ?? userConfig?.preferences?.show_event_markers ?? true;
   const showRiskZones = userConfig?.showRiskZones ?? userConfig?.preferences?.show_risk_zones ?? true;
   const availableLayers = useMemo(
@@ -248,6 +252,13 @@ const MapHomeScreen = ({ navigation }) => {
     const region = mapScope === 'LOCAL' ? localRegion : GLOBAL_REGION;
     mapRef.current?.animateToRegion?.(region, 600);
   }, [localRegion, mapScope]);
+  const handleRetryMapData = useCallback(() => {
+    if (mapScope === 'LOCAL' || activeTab === 'MY_ALERTS') {
+      refreshMyEvents().catch(() => {});
+      return;
+    }
+    refreshWorldEvents().catch(() => {});
+  }, [activeTab, mapScope, refreshMyEvents, refreshWorldEvents]);
 
   return (
     <View style={styles.container}>
@@ -331,6 +342,20 @@ const MapHomeScreen = ({ navigation }) => {
           <Text style={styles.unavailableBannerText}>
             My monitoring is unavailable until you sign in with a valid account.
           </Text>
+        </View>
+      ) : null}
+
+      {timedOutMapRequest ? (
+        <View style={styles.timeoutBanner}>
+          <View style={styles.timeoutBannerCopy}>
+            <Text style={styles.timeoutBannerTitle}>Request timed out</Text>
+            <Text style={styles.timeoutBannerText}>
+              Map events could not be loaded. Check your connection and retry.
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.timeoutBannerButton} onPress={handleRetryMapData}>
+            <Text style={styles.timeoutBannerButtonText}>Retry</Text>
+          </TouchableOpacity>
         </View>
       ) : null}
 
@@ -566,6 +591,34 @@ const styles = StyleSheet.create({
   },
   unavailableBannerTitle: { color: colors.text, fontSize: 12, fontWeight: '700' },
   unavailableBannerText: { color: colors.textSec, fontSize: 11, marginTop: 2 },
+  timeoutBanner: {
+    position: 'absolute',
+    top: 118,
+    left: spacing.lg,
+    right: 84,
+    backgroundColor: 'rgba(60,16,16,0.96)',
+    borderColor: 'rgba(255,120,120,0.28)',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    zIndex: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  timeoutBannerCopy: { flex: 1 },
+  timeoutBannerTitle: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  timeoutBannerText: { color: colors.textSec, fontSize: 11, marginTop: 2 },
+  timeoutBannerButton: {
+    borderRadius: 999,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  timeoutBannerButtonText: { color: colors.text, fontSize: 11, fontWeight: '700' },
   realtimeBanner: {
     position: 'absolute',
     top: 118,

@@ -13,6 +13,10 @@ export function setAuthToken(getTokenFn) {
   _getToken = getTokenFn;
 }
 
+export function isTimeoutError(error) {
+  return error?.message === 'Request timed out';
+}
+
 /** Base fetch wrapper with auth, timeout, and error handling. */
 async function request(path, options = {}) {
   const { method = 'GET', body, params, timeout = 30000 } = options;
