@@ -105,6 +105,7 @@ const ThreadScreen = ({ route, navigation }) => {
   const flatListRef = useRef(null);
   const pendingReplyTimeoutsRef = useRef(new Set());
   const isScreenActiveRef = useRef(true);
+  const nextMessageIdRef = useRef(THREAD_MESSAGES.default.length);
 
   const scrollToBottom = () => {
     if (flatListRef.current) {
@@ -126,11 +127,17 @@ const ThreadScreen = ({ route, navigation }) => {
     };
   }, []);
 
+  const createMessageId = () => {
+    const nextId = nextMessageIdRef.current;
+    nextMessageIdRef.current += 1;
+    return `msg-${nextId}`;
+  };
+
   const handleSend = () => {
     if (inputText.trim()) {
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const userMsg = {
-        id: Date.now().toString(),
+        id: createMessageId(),
         author: 'Kian M.',
         avatar: 'KM',
         role: 'Admin · Guardian Space',
@@ -163,7 +170,7 @@ const ThreadScreen = ({ route, navigation }) => {
           return;
         }
         const replyMsg = {
-          id: (Date.now() + 1).toString(),
+          id: createMessageId(),
           ...responder,
           text: reply,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
