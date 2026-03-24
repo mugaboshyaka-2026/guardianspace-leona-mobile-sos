@@ -53,3 +53,17 @@ export async function mergeStoredSettingsPreferences(patch = {}) {
   await writeStore(next);
   return next;
 }
+
+export async function removeStoredSettingsPreferences(keys = []) {
+  if (!Array.isArray(keys) || keys.length === 0) {
+    return await readStore();
+  }
+
+  const current = await readStore();
+  const next = { ...current };
+  keys.forEach((key) => {
+    delete next[key];
+  });
+  await writeStore(next);
+  return next;
+}

@@ -17,6 +17,8 @@ import {
   getRelatedNews,
 } from '../lib/api';
 import { onEventUpdate, subscribeToAOI } from '../lib/realtime';
+import { getCurrentDataPreferences, subscribeToDataPreferences } from '../lib/dataPreferences';
+import { getOfflineDataset, setOfflineDataset } from '../lib/offlineCache';
 
 // Simple in-memory cache
 const cache = {
@@ -31,8 +33,10 @@ const cache = {
 };
 
 const STALE_MS = 60_000; // 1 min
+const DATA_SAVER_STALE_MS = 300_000; // 5 min
 const REALTIME_REFRESH_DEBOUNCE_MS = 1500;
 const subscribedAoiIds = new Set();
+const offlineCacheHydrationPromises = {};
 const initialLeonaMessages = [
   {
     id: 'msg0',
@@ -60,6 +64,18 @@ function emitLeonaChat() {
 function updateLeonaChat(partial) {
   Object.assign(leonaChatStore, partial);
   emitLeonaChat();
+}
+
+function buildDataStatus(source, overrides = {}) {
+  const preferences = getCurrentDataPreferences();
+  return {
+    source,
+    message: null,
+    offlineCacheEnabled: Boolean(preferences.offline_cache),
+    dataSaverMode: Boolean(preferences.data_saver_mode),
+    lastUpdated: overrides.lastUpdated ?? null,
+    ...overrides,
+  };
 }
 
 async function executeLeonaChatSend(userText, options = {}) {
@@ -163,6 +179,21 @@ function buildLeonaContextMessage(context) {
   return `Current user context: ${serialized}`;
 }
 
+function getStaleMs() {
+  return getCurrentDataPreferences().data_saver_mode ? DATA_SAVER_STALE_MS : STALE_MS;
+}
+
+function hasCachedEvents(cacheKey) {
+  return Array.isArray(cache[cacheKey]) && cache[cacheKey].length > 0;
+}
+
+function getCachedStatus(cacheKey, message) {
+  return buildDataStatus('cache', {
+    message,
+    lastUpdated: cache.lastFetch[cacheKey] || null,
+  });
+}
+
 export function resetEventCache() {
   cache.myEvents = null;
   cache.worldEvents = null;
@@ -183,10 +214,10 @@ export function resetEventCache() {
   }
   myEventsStore.refreshInFlight = false;
   myEventsStore.pendingRefresh = false;
-  myEventsStore.state = { events: [], loading: false, error: null };
+  myEventsStore.state = { events: [], loading: false, error: null, status: buildDataStatus('live') };
   worldEventsStore.refreshInFlight = false;
   worldEventsStore.pendingRefresh = false;
-  worldEventsStore.state = { events: [], loading: false, error: null };
+  worldEventsStore.state = { events: [], loading: false, error: null, status: buildDataStatus('live') };
   emitSharedEventStore(myEventsStore);
   emitSharedEventStore(worldEventsStore);
   leonaChatStore.messages = initialLeonaMessages;
@@ -196,7 +227,7 @@ export function resetEventCache() {
 
 function isStale(key) {
   const t = cache.lastFetch[key];
-  return !t || Date.now() - t > STALE_MS;
+  return !t || Date.now() - t > getStaleMs();
 }
 
 export function getRefreshIntervalMs(value) {
@@ -245,6 +276,9 @@ function createSharedEventStore(cacheKey) {
       events: cache[cacheKey] || [],
       loading: false,
       error: null,
+      status: buildDataStatus(cache[cacheKey]?.length ? 'cache' : 'live', {
+        lastUpdated: cache.lastFetch[cacheKey] || null,
+      }),
     },
     listeners: new Set(),
     refreshTimeout: null,
@@ -278,7 +312,41 @@ function subscribeSharedEventStore(store, listener) {
   };
 }
 
-async function refreshMyEventsStore() {
+async function hydrateOfflineCache(cacheKey, store) {
+  if (hasCachedEvents(cacheKey)) {
+    return cache[cacheKey];
+  }
+
+  if (!getCurrentDataPreferences().offline_cache) {
+    return null;
+  }
+
+  if (!offlineCacheHydrationPromises[cacheKey]) {
+    offlineCacheHydrationPromises[cacheKey] = getOfflineDataset(cacheKey)
+      .then((entry) => {
+        if (!entry || !Array.isArray(entry.data) || entry.data.length === 0) {
+          return null;
+        }
+
+        cache[cacheKey] = entry.data;
+        cache.lastFetch[cacheKey] = entry.updatedAt || Date.now();
+        updateSharedEventStore(store, {
+          events: entry.data,
+          loading: false,
+          error: null,
+          status: getCachedStatus(cacheKey, 'Showing saved events from offline cache.'),
+        });
+        return entry.data;
+      })
+      .finally(() => {
+        offlineCacheHydrationPromises[cacheKey] = null;
+      });
+  }
+
+  return offlineCacheHydrationPromises[cacheKey];
+}
+
+async function refreshMyEventsStore(options = {}) {
   if (myEventsStore.refreshInFlight) {
     myEventsStore.pendingRefresh = true;
     return;
@@ -287,14 +355,52 @@ async function refreshMyEventsStore() {
   myEventsStore.refreshInFlight = true;
   updateSharedEventStore(myEventsStore, { loading: true, error: null });
 
+  const preferences = getCurrentDataPreferences();
+  await hydrateOfflineCache('myEvents', myEventsStore);
+  if (!options.manual && preferences.offline_cache && preferences.data_saver_mode && hasCachedEvents('myEvents')) {
+    updateSharedEventStore(myEventsStore, {
+      events: cache.myEvents,
+      loading: false,
+      error: null,
+      status: getCachedStatus('myEvents', 'Data Saver is on. Using cached events until you refresh.'),
+    });
+    myEventsStore.refreshInFlight = false;
+    myEventsStore.pendingRefresh = false;
+    return;
+  }
+
   try {
     const data = await fetchMyEvents('all');
     cache.myEvents = data;
     cache.lastFetch.myEvents = Date.now();
-    updateSharedEventStore(myEventsStore, { events: data, loading: false, error: null });
+    if (preferences.offline_cache) {
+      setOfflineDataset('myEvents', data).catch((err) => {
+        console.warn('[useMyEvents] Offline cache write failed:', err.message);
+      });
+    }
+    updateSharedEventStore(myEventsStore, {
+      events: data,
+      loading: false,
+      error: null,
+      status: buildDataStatus('live', { lastUpdated: cache.lastFetch.myEvents }),
+    });
   } catch (err) {
     console.warn('[useMyEvents] API failed:', err.message);
-    updateSharedEventStore(myEventsStore, { events: [], loading: false, error: err });
+    if (preferences.offline_cache && hasCachedEvents('myEvents')) {
+      updateSharedEventStore(myEventsStore, {
+        events: cache.myEvents,
+        loading: false,
+        error: null,
+        status: getCachedStatus('myEvents', 'Offline cache in use. Live updates will resume when you reconnect.'),
+      });
+    } else {
+      updateSharedEventStore(myEventsStore, {
+        events: [],
+        loading: false,
+        error: err,
+        status: buildDataStatus('error'),
+      });
+    }
   } finally {
     myEventsStore.refreshInFlight = false;
     if (myEventsStore.pendingRefresh) {
@@ -308,6 +414,10 @@ async function refreshMyEventsStore() {
 }
 
 function scheduleMyEventsRefresh() {
+  if (getCurrentDataPreferences().data_saver_mode) {
+    return;
+  }
+
   myEventsStore.pendingRefresh = true;
   if (myEventsStore.refreshTimeout) {
     return;
@@ -334,7 +444,10 @@ function ensureMyEventsRealtimeSubscription() {
       const next = mergeEventToFront(cache.myEvents || myEventsStore.state.events, msg.event);
       cache.myEvents = next;
       cache.lastFetch.myEvents = Date.now();
-      updateSharedEventStore(myEventsStore, { events: next });
+      updateSharedEventStore(myEventsStore, {
+        events: next,
+        status: buildDataStatus('live', { lastUpdated: cache.lastFetch.myEvents }),
+      });
       scheduleMyEventsRefresh();
     }
   });
@@ -356,7 +469,7 @@ function cleanupMyEventsRealtimeSubscription() {
   }
 }
 
-async function refreshWorldEventsStore() {
+async function refreshWorldEventsStore(options = {}) {
   if (worldEventsStore.refreshInFlight) {
     worldEventsStore.pendingRefresh = true;
     return;
@@ -365,14 +478,52 @@ async function refreshWorldEventsStore() {
   worldEventsStore.refreshInFlight = true;
   updateSharedEventStore(worldEventsStore, { loading: true, error: null });
 
+  const preferences = getCurrentDataPreferences();
+  await hydrateOfflineCache('worldEvents', worldEventsStore);
+  if (!options.manual && preferences.offline_cache && preferences.data_saver_mode && hasCachedEvents('worldEvents')) {
+    updateSharedEventStore(worldEventsStore, {
+      events: cache.worldEvents,
+      loading: false,
+      error: null,
+      status: getCachedStatus('worldEvents', 'Data Saver is on. Using cached events until you refresh.'),
+    });
+    worldEventsStore.refreshInFlight = false;
+    worldEventsStore.pendingRefresh = false;
+    return;
+  }
+
   try {
     const data = await fetchWorldEvents();
     cache.worldEvents = data;
     cache.lastFetch.worldEvents = Date.now();
-    updateSharedEventStore(worldEventsStore, { events: data, loading: false, error: null });
+    if (preferences.offline_cache) {
+      setOfflineDataset('worldEvents', data).catch((err) => {
+        console.warn('[useWorldEvents] Offline cache write failed:', err.message);
+      });
+    }
+    updateSharedEventStore(worldEventsStore, {
+      events: data,
+      loading: false,
+      error: null,
+      status: buildDataStatus('live', { lastUpdated: cache.lastFetch.worldEvents }),
+    });
   } catch (err) {
     console.warn('[useWorldEvents] API failed:', err.message);
-    updateSharedEventStore(worldEventsStore, { events: [], loading: false, error: err });
+    if (preferences.offline_cache && hasCachedEvents('worldEvents')) {
+      updateSharedEventStore(worldEventsStore, {
+        events: cache.worldEvents,
+        loading: false,
+        error: null,
+        status: getCachedStatus('worldEvents', 'Offline cache in use. Live updates will resume when you reconnect.'),
+      });
+    } else {
+      updateSharedEventStore(worldEventsStore, {
+        events: [],
+        loading: false,
+        error: err,
+        status: buildDataStatus('error'),
+      });
+    }
   } finally {
     worldEventsStore.refreshInFlight = false;
     if (worldEventsStore.pendingRefresh) {
@@ -386,6 +537,10 @@ async function refreshWorldEventsStore() {
 }
 
 function scheduleWorldEventsRefresh() {
+  if (getCurrentDataPreferences().data_saver_mode) {
+    return;
+  }
+
   worldEventsStore.pendingRefresh = true;
   if (worldEventsStore.refreshTimeout) {
     return;
@@ -411,7 +566,10 @@ function ensureWorldEventsRealtimeSubscription() {
     const next = mergeEventToFront(cache.worldEvents || worldEventsStore.state.events, msg.event);
     cache.worldEvents = next;
     cache.lastFetch.worldEvents = Date.now();
-    updateSharedEventStore(worldEventsStore, { events: next });
+    updateSharedEventStore(worldEventsStore, {
+      events: next,
+      status: buildDataStatus('live', { lastUpdated: cache.lastFetch.worldEvents }),
+    });
     scheduleWorldEventsRefresh();
   });
 }
@@ -439,31 +597,39 @@ export function useMyEvents(enabled = true, refreshIntervalMs = null) {
   const [events, setEvents] = useState(enabled ? myEventsStore.state.events : []);
   const [loading, setLoading] = useState(enabled ? (myEventsStore.state.loading || !cache.myEvents) : false);
   const [error, setError] = useState(enabled ? myEventsStore.state.error : null);
+  const [status, setStatus] = useState(myEventsStore.state.status);
+  const [preferences, setPreferences] = useState(getCurrentDataPreferences());
 
   const refresh = useCallback(async () => {
     if (!enabled) {
       setEvents([]);
       setLoading(false);
       setError(null);
+      setStatus(buildDataStatus('live'));
       return;
     }
-    await refreshMyEventsStore();
+    await refreshMyEventsStore({ manual: true });
   }, [enabled]);
+
+  useEffect(() => subscribeToDataPreferences(setPreferences), []);
 
   useEffect(() => {
     if (!enabled) {
       setEvents([]);
       setLoading(false);
       setError(null);
+      setStatus(buildDataStatus('live'));
       return undefined;
     }
 
     myEventsStore.subscriberCount += 1;
     ensureMyEventsRealtimeSubscription();
+    hydrateOfflineCache('myEvents', myEventsStore).catch(() => {});
     const unsub = subscribeSharedEventStore(myEventsStore, (nextState) => {
       setEvents(nextState.events);
       setLoading(nextState.loading);
       setError(nextState.error);
+      setStatus(nextState.status);
     });
 
     if (isStale('myEvents')) {
@@ -475,10 +641,10 @@ export function useMyEvents(enabled = true, refreshIntervalMs = null) {
       myEventsStore.subscriberCount = Math.max(0, myEventsStore.subscriberCount - 1);
       cleanupMyEventsRealtimeSubscription();
     };
-  }, [enabled]);
+  }, [enabled, preferences.data_saver_mode, preferences.offline_cache]);
 
   useEffect(() => {
-    if (!enabled || !refreshIntervalMs) {
+    if (!enabled || !refreshIntervalMs || preferences.data_saver_mode) {
       return undefined;
     }
 
@@ -487,9 +653,9 @@ export function useMyEvents(enabled = true, refreshIntervalMs = null) {
     }, refreshIntervalMs);
 
     return () => clearInterval(intervalId);
-  }, [enabled, refreshIntervalMs]);
+  }, [enabled, preferences.data_saver_mode, refreshIntervalMs]);
 
-  return { events, loading, error, refresh };
+  return { events, loading, error, refresh, status };
 }
 
 /**
@@ -499,18 +665,24 @@ export function useWorldEvents(refreshIntervalMs = null) {
   const [events, setEvents] = useState(worldEventsStore.state.events);
   const [loading, setLoading] = useState(worldEventsStore.state.loading || !cache.worldEvents);
   const [error, setError] = useState(worldEventsStore.state.error);
+  const [status, setStatus] = useState(worldEventsStore.state.status);
+  const [preferences, setPreferences] = useState(getCurrentDataPreferences());
 
   const refresh = useCallback(async () => {
-    await refreshWorldEventsStore();
+    await refreshWorldEventsStore({ manual: true });
   }, []);
+
+  useEffect(() => subscribeToDataPreferences(setPreferences), []);
 
   useEffect(() => {
     worldEventsStore.subscriberCount += 1;
     ensureWorldEventsRealtimeSubscription();
+    hydrateOfflineCache('worldEvents', worldEventsStore).catch(() => {});
     const unsub = subscribeSharedEventStore(worldEventsStore, (nextState) => {
       setEvents(nextState.events);
       setLoading(nextState.loading);
       setError(nextState.error);
+      setStatus(nextState.status);
     });
 
     if (isStale('worldEvents')) {
@@ -522,10 +694,10 @@ export function useWorldEvents(refreshIntervalMs = null) {
       worldEventsStore.subscriberCount = Math.max(0, worldEventsStore.subscriberCount - 1);
       cleanupWorldEventsRealtimeSubscription();
     };
-  }, []);
+  }, [preferences.data_saver_mode, preferences.offline_cache]);
 
   useEffect(() => {
-    if (!refreshIntervalMs) {
+    if (!refreshIntervalMs || preferences.data_saver_mode) {
       return undefined;
     }
 
@@ -534,9 +706,9 @@ export function useWorldEvents(refreshIntervalMs = null) {
     }, refreshIntervalMs);
 
     return () => clearInterval(intervalId);
-  }, [refreshIntervalMs]);
+  }, [preferences.data_saver_mode, refreshIntervalMs]);
 
-  return { events, loading, error, refresh };
+  return { events, loading, error, refresh, status };
 }
 
 /**

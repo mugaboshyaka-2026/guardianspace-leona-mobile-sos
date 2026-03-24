@@ -68,10 +68,21 @@ const AlertsScreen = ({ navigation, route }) => {
   const myDataRequiresAuth = authLoaded && !myDataAuthEnabled;
 
   // ── Live API data ──
-  const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents(myDataAuthEnabled, refreshIntervalMs);
+  const {
+    events: myAlerts,
+    loading: myLoading,
+    error: myError,
+    status: myAlertsStatus,
+  } = useMyEvents(myDataAuthEnabled, refreshIntervalMs);
   const { error: aoisError } = useAOIs(activeTab === 'MY' && myDataAuthEnabled);
-  const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents(refreshIntervalMs);
+  const {
+    events: worldEvents,
+    loading: worldLoading,
+    error: worldError,
+    status: worldEventsStatus,
+  } = useWorldEvents(refreshIntervalMs);
   const myAlertsUnavailable = myDataRequiresAuth || isAccessDeniedError(myError) || isAccessDeniedError(aoisError);
+  const activeDataStatus = activeTab === 'MY' ? myAlertsStatus : worldEventsStatus;
   const filteredMyAlerts = useMemo(
     () => limitEventsForProduct(
       filterEventsForConfig(myAlerts, userConfig, 'local'),
@@ -305,6 +316,17 @@ const AlertsScreen = ({ navigation, route }) => {
               </TouchableOpacity>
             </View>
           )}
+
+          {activeDataStatus?.source === 'cache' && activeDataStatus?.message ? (
+            <View style={styles.cacheBanner}>
+              <View style={styles.cacheBannerCopy}>
+                <Text style={styles.cacheBannerTitle}>
+                  {activeDataStatus.dataSaverMode ? 'Data Saver active' : 'Offline cache active'}
+                </Text>
+                <Text style={styles.cacheBannerText}>{activeDataStatus.message}</Text>
+              </View>
+            </View>
+          ) : null}
 
           {isLoading && (
             <ActivityIndicator color={colors.blue} style={styles.loadingIndicator} />
@@ -544,6 +566,19 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.12)',
   },
   realtimeBannerButtonText: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  cacheBanner: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(77,184,255,0.28)',
+    backgroundColor: 'rgba(77,184,255,0.12)',
+  },
+  cacheBannerCopy: { gap: 2 },
+  cacheBannerTitle: { color: colors.text, fontSize: 13, fontWeight: '700' },
+  cacheBannerText: { color: colors.textSec, fontSize: 12, lineHeight: 17 },
   emptyState: { paddingVertical: 60, alignItems: 'center', gap: 8 },
   emptyTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   emptyText: { color: colors.textDim, fontSize: 13 },

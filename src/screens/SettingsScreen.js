@@ -14,6 +14,8 @@ import { PRODUCT_CONFIGS, getProductConfig } from '../lib/products';
 import { useAOIs } from '../hooks/useEvents';
 import { updateUserProfile } from '../lib/api';
 import { mergeStoredSettingsPreferences } from '../lib/settingsPreferences';
+import { setCurrentDataPreferences } from '../lib/dataPreferences';
+import { clearOfflineDataset } from '../lib/offlineCache';
 
 const MAP_TYPE_OPTIONS = ['2D', '3D', 'Satellite'];
 const REFRESH_INTERVAL_OPTIONS = ['30s', '1m', '5m', '15m'];
@@ -48,11 +50,19 @@ const SettingsScreen = ({ navigation }) => {
     const savedRefreshInterval = userConfig?.refreshInterval ?? userConfig?.preferences?.refresh_interval ?? '1m';
     return REFRESH_INTERVAL_OPTIONS.includes(savedRefreshInterval) ? savedRefreshInterval : '1m';
   }, [userConfig?.preferences?.refresh_interval, userConfig?.refreshInterval]);
+  const configuredOfflineCache = useMemo(
+    () => Boolean(userConfig?.offlineCache ?? userConfig?.preferences?.offline_cache ?? true),
+    [userConfig?.offlineCache, userConfig?.preferences?.offline_cache]
+  );
+  const configuredDataSaverMode = useMemo(
+    () => Boolean(userConfig?.dataSaverMode ?? userConfig?.preferences?.data_saver_mode ?? false),
+    [userConfig?.dataSaverMode, userConfig?.preferences?.data_saver_mode]
+  );
 
   const [emailDigest, setEmailDigest] = useState(false);
   const [highResImagery, setHighResImagery] = useState(false);
-  const [offlineCache, setOfflineCache] = useState(true);
-  const [dataSaverMode, setDataSaverMode] = useState(false);
+  const [offlineCache, setOfflineCache] = useState(configuredOfflineCache);
+  const [dataSaverMode, setDataSaverMode] = useState(configuredDataSaverMode);
   const [darkMode, setDarkMode] = useState(true);
   const [mapType, setMapType] = useState(defaultMapType);
   const [refreshInterval, setRefreshInterval] = useState(configuredRefreshInterval);
@@ -64,6 +74,14 @@ const SettingsScreen = ({ navigation }) => {
   useEffect(() => {
     setRefreshInterval(configuredRefreshInterval);
   }, [configuredRefreshInterval]);
+
+  useEffect(() => {
+    setOfflineCache(configuredOfflineCache);
+  }, [configuredOfflineCache]);
+
+  useEffect(() => {
+    setDataSaverMode(configuredDataSaverMode);
+  }, [configuredDataSaverMode]);
 
   const handlePlanChange = (planId) => {
     setUserConfig((prev) => ({
@@ -139,6 +157,44 @@ const SettingsScreen = ({ navigation }) => {
     persistNotificationPreferences({ refresh_interval: value });
   };
 
+  const handleOfflineCacheToggle = (value) => {
+    setOfflineCache(value);
+    setCurrentDataPreferences({
+      offline_cache: value,
+      data_saver_mode: dataSaverMode,
+    });
+    setUserConfig((prev) => ({
+      ...(prev || {}),
+      offlineCache: value,
+      preferences: {
+        ...(prev?.preferences || {}),
+        offline_cache: value,
+      },
+    }));
+    persistNotificationPreferences({ offline_cache: value });
+    if (!value) {
+      clearOfflineDataset('myEvents').catch(() => {});
+      clearOfflineDataset('worldEvents').catch(() => {});
+    }
+  };
+
+  const handleDataSaverModeToggle = (value) => {
+    setDataSaverMode(value);
+    setCurrentDataPreferences({
+      offline_cache: offlineCache,
+      data_saver_mode: value,
+    });
+    setUserConfig((prev) => ({
+      ...(prev || {}),
+      dataSaverMode: value,
+      preferences: {
+        ...(prev?.preferences || {}),
+        data_saver_mode: value,
+      },
+    }));
+    persistNotificationPreferences({ data_saver_mode: value });
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -188,8 +244,18 @@ const SettingsScreen = ({ navigation }) => {
             onToggle={setHighResImagery}
             subtitle="Uses more data"
           />
-          <SettingRow label="Offline Cache" value={offlineCache} onToggle={setOfflineCache} />
-          <SettingRow label="Data Saver Mode" value={dataSaverMode} onToggle={setDataSaverMode} />
+          <SettingRow
+            label="Offline Cache"
+            value={offlineCache}
+            onToggle={handleOfflineCacheToggle}
+            subtitle="Keeps recent event feeds available when the network drops"
+          />
+          <SettingRow
+            label="Data Saver Mode"
+            value={dataSaverMode}
+            onToggle={handleDataSaverModeToggle}
+            subtitle="Uses cached feeds and reduces automatic refreshes"
+          />
         </View>
 
         <View style={styles.section}>

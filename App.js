@@ -13,6 +13,7 @@ import { addNotificationResponseListener, consumeLastNotificationResponse, getEx
 import { syncPushToken } from './src/lib/pushRegistration';
 import { markAlertViewed } from './src/lib/viewedAlerts';
 import { getStoredSettingsPreferences } from './src/lib/settingsPreferences';
+import { setCurrentDataPreferences } from './src/lib/dataPreferences';
 
 // App context for onboarding completion
 export const AppContext = createContext();
@@ -159,6 +160,22 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         ?? profile?.preferences?.refreshInterval
         ?? userConfig?.refreshInterval
         ?? '1m';
+      const persistedOfflineCache = localPreferences?.offline_cache
+        ?? localPreferences?.offlineCache
+        ?? profile?.preferences?.offline_cache
+        ?? profile?.preferences?.offlineCache
+        ?? userConfig?.offlineCache
+        ?? true;
+      const persistedDataSaverMode = localPreferences?.data_saver_mode
+        ?? localPreferences?.dataSaverMode
+        ?? profile?.preferences?.data_saver_mode
+        ?? profile?.preferences?.dataSaverMode
+        ?? userConfig?.dataSaverMode
+        ?? false;
+      setCurrentDataPreferences({
+        offline_cache: Boolean(persistedOfflineCache),
+        data_saver_mode: Boolean(persistedDataSaverMode),
+      });
       const persistedAois = aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean);
 
       if (!persistedAois.length) {
@@ -191,6 +208,8 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         showRiskZones: Boolean(persistedShowRiskZones),
         defaultMapType: persistedDefaultMapType,
         refreshInterval: persistedRefreshInterval,
+        offlineCache: Boolean(persistedOfflineCache),
+        dataSaverMode: Boolean(persistedDataSaverMode),
         preferences: {
           ...(prev?.preferences || {}),
           ...(profile?.preferences || {}),
@@ -202,6 +221,8 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
           show_risk_zones: Boolean(persistedShowRiskZones),
           default_map_type: persistedDefaultMapType,
           refresh_interval: persistedRefreshInterval,
+          offline_cache: Boolean(persistedOfflineCache),
+          data_saver_mode: Boolean(persistedDataSaverMode),
         },
       }));
       console.log('[App] userConfig hydrated', {
@@ -216,6 +237,8 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         showRiskZones: Boolean(persistedShowRiskZones),
         defaultMapType: persistedDefaultMapType,
         refreshInterval: persistedRefreshInterval,
+        offlineCache: Boolean(persistedOfflineCache),
+        dataSaverMode: Boolean(persistedDataSaverMode),
       });
     };
 

@@ -82,9 +82,19 @@ const MapHomeScreen = ({ navigation }) => {
   );
   const [mapMode, setMapMode] = useState(defaultMapMode);
 
-  const { events: myEvents, error: myEventsError, refresh: refreshMyEvents } = useMyEvents(myDataAuthEnabled, refreshIntervalMs);
+  const {
+    events: myEvents,
+    error: myEventsError,
+    refresh: refreshMyEvents,
+    status: myEventsStatus,
+  } = useMyEvents(myDataAuthEnabled, refreshIntervalMs);
   const { error: aoisError } = useAOIs((mapScope === 'LOCAL' || activeTab === 'MY_ALERTS') && myDataAuthEnabled);
-  const { events: worldEvents, error: worldEventsError, refresh: refreshWorldEvents } = useWorldEvents(refreshIntervalMs);
+  const {
+    events: worldEvents,
+    error: worldEventsError,
+    refresh: refreshWorldEvents,
+    status: worldEventsStatus,
+  } = useWorldEvents(refreshIntervalMs);
   const myDataUnavailable = myDataRequiresAuth || isAccessDeniedError(myEventsError) || isAccessDeniedError(aoisError);
   const timedOutMapRequest = (mapScope === 'LOCAL' || activeTab === 'MY_ALERTS')
     ? isTimeoutError(myEventsError) || isTimeoutError(aoisError)
@@ -163,6 +173,8 @@ const MapHomeScreen = ({ navigation }) => {
   }, [activeTab, productConfig.canUseCommunity, searchedEvents]);
   const showMyDataUnavailableState = myDataUnavailable && (mapScope === 'LOCAL' || activeTab === 'MY_ALERTS');
   const showBottomSheetMyDataUnavailable = activeTab === 'MY_ALERTS' && showMyDataUnavailableState;
+  const activeEventStatus = mapScope === 'LOCAL' || activeTab === 'MY_ALERTS' ? myEventsStatus : worldEventsStatus;
+  const showDataModeBanner = !showMyDataUnavailableState && activeEventStatus?.source === 'cache' && !!activeEventStatus?.message;
 
   useEffect(() => {
     setLayerStates((prev) => {
@@ -403,6 +415,15 @@ const MapHomeScreen = ({ navigation }) => {
           <TouchableOpacity style={styles.timeoutBannerButton} onPress={handleRetryMapData}>
             <Text style={styles.timeoutBannerButtonText}>Retry</Text>
           </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {showDataModeBanner ? (
+        <View style={styles.cacheBanner}>
+          <Text style={styles.cacheBannerTitle}>
+            {activeEventStatus.dataSaverMode ? 'Data Saver active' : 'Offline cache active'}
+          </Text>
+          <Text style={styles.cacheBannerText}>{activeEventStatus.message}</Text>
         </View>
       ) : null}
 
@@ -704,6 +725,21 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.12)',
   },
   timeoutBannerButtonText: { color: colors.text, fontSize: 11, fontWeight: '700' },
+  cacheBanner: {
+    position: 'absolute',
+    top: 188,
+    left: spacing.lg,
+    right: 84,
+    backgroundColor: 'rgba(14,38,58,0.96)',
+    borderColor: 'rgba(77,184,255,0.28)',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    zIndex: 11,
+  },
+  cacheBannerTitle: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  cacheBannerText: { color: colors.textSec, fontSize: 11, marginTop: 2 },
   realtimeBanner: {
     position: 'absolute',
     top: 118,
