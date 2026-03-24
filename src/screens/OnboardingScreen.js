@@ -81,6 +81,7 @@ export default function OnboardingScreen() {
   const [pulseAnim] = useState(new Animated.Value(1));
   const [submittingSetup, setSubmittingSetup] = useState(false);
   const [locationError, setLocationError] = useState('');
+  const [eventTypeError, setEventTypeError] = useState('');
 
   useEffect(() => {
     if (step === 5) {
@@ -487,6 +488,7 @@ export default function OnboardingScreen() {
   };
 
   const toggleEventType = (value) => {
+    setEventTypeError('');
     setSelectedEventTypes((prev) => (
       prev.includes(value)
         ? prev.filter((item) => item !== value)
@@ -544,11 +546,13 @@ export default function OnboardingScreen() {
     }
 
     if (selectedEventTypes.length === 0) {
+      setEventTypeError('Select at least one event type before continuing.');
       Alert.alert('Event types required', 'Select at least one event type before continuing.');
       return;
     }
 
     setLocationError('');
+    setEventTypeError('');
     setSelectedAois(nextAois);
     setStep(5);
   };
@@ -562,6 +566,12 @@ export default function OnboardingScreen() {
 
     if (normalizedAois.length === 0) {
       Alert.alert('AOI required', 'Select at least one area of interest before entering the app.');
+      return;
+    }
+
+    if (selectedEventTypes.length === 0) {
+      setEventTypeError('Select at least one event type before entering the app.');
+      Alert.alert('Event types required', 'Select at least one event type before entering the app.');
       return;
     }
 
@@ -677,6 +687,8 @@ export default function OnboardingScreen() {
           location={location}
           setLocation={setLocation}
           locationError={locationError}
+          setLocationError={setLocationError}
+          eventTypeError={eventTypeError}
           selectedAois={selectedAois}
           toggleAoi={toggleAoi}
           suggestions={allSuggestedAois}
@@ -715,6 +727,7 @@ export default function OnboardingScreen() {
           eventTypes={selectedEventTypes}
           product={selectedProduct}
           productLabel={productLabel}
+          eventTypeError={eventTypeError}
           onComplete={handleComplete}
           pulseAnim={pulseAnim}
           submitting={submittingSetup}
@@ -989,6 +1002,8 @@ const StepAoiSetup = ({
   location,
   setLocation,
   locationError,
+  setLocationError,
+  eventTypeError,
   selectedAois,
   toggleAoi,
   suggestions,
@@ -1090,14 +1105,20 @@ const StepAoiSetup = ({
       ))}
     </View>
 
-    <TouchableOpacity style={styles.buttonPrimary} onPress={onNext}>
+    {eventTypeError ? <Text style={styles.validationText}>{eventTypeError}</Text> : null}
+
+    <TouchableOpacity
+      style={[styles.buttonPrimary, selectedEventTypes.length === 0 && styles.buttonPrimaryDisabled]}
+      onPress={onNext}
+    >
       <Text style={styles.buttonTextPrimary}>NEXT -></Text>
     </TouchableOpacity>
   </ScrollView>
 );
 
-const StepReady = ({ location, radius, aois, eventTypes, product, productLabel, onComplete, pulseAnim, submitting }) => {
+const StepReady = ({ location, radius, aois, eventTypes, product, productLabel, eventTypeError, onComplete, pulseAnim, submitting }) => {
   const productData = PRODUCTS.find((p) => p.id === product);
+  const isEventTypeSelectionEmpty = !eventTypes || eventTypes.length === 0;
 
   return (
     <ScrollView contentContainerStyle={styles.stepContainer}>
@@ -1124,7 +1145,13 @@ const StepReady = ({ location, radius, aois, eventTypes, product, productLabel, 
         <SummaryRow label="Event Types" value={`${eventTypes?.length || 0}`} />
       </View>
 
-      <TouchableOpacity style={styles.buttonPrimary} onPress={onComplete} disabled={submitting}>
+      {eventTypeError ? <Text style={styles.validationText}>{eventTypeError}</Text> : null}
+
+      <TouchableOpacity
+        style={[styles.buttonPrimary, (submitting || isEventTypeSelectionEmpty) && styles.buttonPrimaryDisabled]}
+        onPress={onComplete}
+        disabled={submitting || isEventTypeSelectionEmpty}
+      >
         <Text style={styles.buttonTextPrimary}>
           {submitting ? 'SAVING AOIS...' : `ENTER ${productLabel.toUpperCase()} ->`}
         </Text>
@@ -1272,6 +1299,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     marginBottom: spacing.lg,
+  },
+  buttonPrimaryDisabled: {
+    opacity: 0.45,
   },
   buttonTextPrimary: {
     color: colors.bg,
