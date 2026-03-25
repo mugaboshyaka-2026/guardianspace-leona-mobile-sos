@@ -18,11 +18,12 @@ import DataSourcesScreen from '../screens/DataSourcesScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SubscriptionScreen from '../screens/SubscriptionScreen';
 import CallScreen from '../screens/CallScreen';
-import { useMyEvents } from '../hooks/useEvents';
+import { useAlerts, useMyEvents } from '../hooks/useEvents';
 import { useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
 import { filterEventsForConfig } from '../lib/locality';
 import { getProductConfig, limitEventsForProduct } from '../lib/products';
+import { useAuth } from '../lib/auth';
 
 // LEONA avatar image
 const leonaAvatar = require('../assets/leona-avatar.png');
@@ -178,17 +179,30 @@ const LeonaTabButton = ({ onPress, accessibilityState }) => {
 
 export const AppNavigator = () => {
   const { userConfig } = useContext(AppContext);
+  const { isSignedIn, authReady } = useAuth();
   const productConfig = getProductConfig(userConfig?.product);
-  const { events: myEvents } = useMyEvents();
+  const myDataAuthEnabled = isSignedIn && authReady;
+  const { meta: alertsMeta } = useAlerts(myDataAuthEnabled);
+  const { events: myEvents } = useMyEvents(myDataAuthEnabled);
   const { events: worldEvents } = useWorldEvents();
   const filteredMyEvents = useMemo(
     () => limitEventsForProduct(
-      filterEventsForConfig(myEvents.length > 0 ? myEvents : worldEvents, userConfig, 'local'),
+      filterEventsForConfig(myEvents, userConfig, 'local'),
       userConfig?.product
     ),
-    [myEvents, userConfig, worldEvents]
+    [myEvents, userConfig]
   );
-  const alertsBadge = filteredMyEvents.length > 0 ? filteredMyEvents.length : undefined;
+  const badgeEvents = useMemo(
+    () => (
+      userConfig?.criticalOnly
+        ? filteredMyEvents.filter((event) => event?.severity === 'critical')
+        : filteredMyEvents
+    ),
+    [filteredMyEvents, userConfig?.criticalOnly]
+  );
+  const alertsBadge = myDataAuthEnabled
+    ? (alertsMeta?.unread > 0 ? alertsMeta.unread : undefined)
+    : undefined;
 
   return (
     <Tab.Navigator

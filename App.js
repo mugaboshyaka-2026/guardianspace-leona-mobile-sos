@@ -1,5 +1,4 @@
 import React, { useState, createContext, useEffect } from 'react';
-import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -8,8 +7,12 @@ import OnboardingScreen from './src/screens/OnboardingScreen';
 import { AuthProvider, useAuth } from './src/lib/auth';
 import { colors } from './src/theme';
 import { useAOIs, useProfile, resetEventCache } from './src/hooks/useEvents';
-import { onEventUpdate } from './src/lib/realtime';
-import { addNotificationResponseListener, initNotifications, notifyRealtimeUpdate } from './src/lib/notifications';
+import BrandedLoader from './src/components/BrandedLoader';
+import { addNotificationResponseListener, consumeLastNotificationResponse, getExpoPushToken, initNotifications } from './src/lib/notifications';
+import { syncPushToken } from './src/lib/pushRegistration';
+import { getStoredSettingsPreferences } from './src/lib/settingsPreferences';
+import { setCurrentDataPreferences } from './src/lib/dataPreferences';
+import { markAlertRead, normalizeAlertToEvent } from './src/lib/api';
 
 // App context for onboarding completion
 export const AppContext = createContext();
@@ -32,7 +35,7 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <AppContext.Provider value={{ userConfig, handleOnboardingComplete, handleLogout }}>
+      <AppContext.Provider value={{ userConfig, setUserConfig, handleOnboardingComplete, handleLogout }}>
         <AppShell
           onboardingComplete={onboardingComplete}
           setOnboardingComplete={setOnboardingComplete}
@@ -48,122 +51,325 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
   const { isLoaded, isSignedIn, authReady } = useAuth();
   const { aois, loading: aoisLoading } = useAOIs(isSignedIn && authReady);
   const { profile, loading: profileLoading } = useProfile(isSignedIn && authReady);
+  const [pendingNotificationResponse, setPendingNotificationResponse] = useState(null);
 
   useEffect(() => {
-    if (!isSignedIn) {
-      return;
+    if (isSignedIn) {
+      setOnboardingComplete(false);
+    }
+  }, [isSignedIn, setOnboardingComplete]);
+
+  const buildEventFromNotificationResponse = React.useCallback((response) => {
+    const content = response?.notification?.request?.content || {};
+    const data = content?.data || {};
+    const nestedEvent = data?.event;
+
+    if (nestedEvent?.id || nestedEvent?.event_id) {
+      return nestedEvent;
     }
 
-    if (!authReady) {
-      console.log('[App] userConfig hydrate waiting for authReady');
-      return;
+    if (!data?.alert_id && !data?.alertId && !data?.event_id && !data?.eventId) {
+      return null;
     }
 
-    if (profileLoading || aoisLoading) {
-      return;
-    }
-
-    const persistedEventTypes = Array.isArray(profile?.preferences?.event_types)
-      ? profile.preferences.event_types
-      : Array.isArray(profile?.preferences?.eventTypes)
-        ? profile.preferences.eventTypes
-        : [];
-    const persistedRadius = profile?.preferences?.radius_km
-      ?? profile?.preferences?.radiusKm
-      ?? aois.find((aoi) => Number(aoi?.radius_km))?.radius_km
-      ?? userConfig?.radius
-      ?? 0;
-    const persistedAois = aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean);
-
-    if (!persistedAois.length) {
-      console.log('[App] userConfig hydrate skipped: no AOIs available');
-      return;
-    }
-
-    console.log('[App] userConfig hydrate source', {
-      persistedEventTypes,
-      persistedRadius,
-      persistedAois,
-      profilePreferences: profile?.preferences || null,
+    return normalizeAlertToEvent({
+      id: data?.alert_id || data?.alertId || null,
+      event_id: data?.event_id || data?.eventId || null,
+      title: content?.title || data?.title || 'Alert',
+      body: content?.body || data?.body || '',
+      severity: data?.severity || 'high',
+      event_category: data?.category || data?.event_category || data?.type || 'alert',
+      event_lat: data?.lat,
+      event_lng: data?.lng,
+      channel: data?.channel || 'push',
+      created_at: new Date().toISOString(),
     });
+  }, []);
 
-    setUserConfig((prev) => ({
-      ...(prev || {}),
-      location: prev?.location || persistedAois[0],
-      aois: persistedAois,
-      radius: Number(persistedRadius) || 0,
-      eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (prev?.eventTypes || []),
-      preferences: profile?.preferences || prev?.preferences || {},
-    }));
-    console.log('[App] userConfig hydrated', {
-      location: persistedAois[0],
-      aois: persistedAois,
-      radius: Number(persistedRadius) || 0,
-      eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (userConfig?.eventTypes || []),
+  const handleNotificationOpen = React.useCallback(async (response) => {
+    const event = buildEventFromNotificationResponse(response);
+    const alertId =
+      response?.notification?.request?.content?.data?.alert_id
+      || response?.notification?.request?.content?.data?.alertId
+      || event?.alert_id
+      || null;
+    const canNavigateToApp = navigationRef.isReady() && onboardingComplete;
+
+    if (!event) {
+      console.log('[App] Notification tap ignored', {
+        hasEvent: !!event,
+        navReady: navigationRef.isReady(),
+        onboardingComplete,
+      });
+      return;
+    }
+
+    if (!canNavigateToApp) {
+      console.log('[App] Notification tap queued', {
+        eventId: event.id || event.event_id || null,
+        navReady: navigationRef.isReady(),
+        onboardingComplete,
+      });
+      setPendingNotificationResponse(response);
+      return;
+    }
+
+    if (alertId) {
+      await markAlertRead(alertId).catch((err) => {
+        console.warn('[App] Failed to mark alert read from notification:', err.message);
+      });
+    }
+
+    console.log('[App] Navigating from notification tap', {
+      eventId: event.id || event.event_id || null,
+      title: event.title || null,
     });
-    setOnboardingComplete(true);
+    navigationRef.navigate('AlertsTab', {
+      screen: 'EventDetail',
+      params: {
+        event,
+        notificationOpenedAt: Date.now(),
+      },
+    });
+    setPendingNotificationResponse(null);
+  }, [buildEventFromNotificationResponse, onboardingComplete]);
+
+  useEffect(() => {
+    if (!pendingNotificationResponse || !navigationRef.isReady() || !onboardingComplete) {
+      return;
+    }
+
+    handleNotificationOpen(pendingNotificationResponse).catch((err) => {
+      console.warn('[App] Pending notification open handling failed:', err.message);
+    });
+  }, [handleNotificationOpen, onboardingComplete, pendingNotificationResponse]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateUserConfig = async () => {
+      if (!isSignedIn) {
+        return;
+      }
+
+      if (!authReady) {
+        console.log('[App] userConfig hydrate waiting for authReady');
+        return;
+      }
+
+      if (profileLoading || aoisLoading) {
+        return;
+      }
+
+      const localPreferences = await getStoredSettingsPreferences().catch((err) => {
+        console.warn('[App] Local settings preference read failed:', err.message);
+        return {};
+      });
+      const persistedEventTypes = Array.isArray(profile?.preferences?.event_types)
+        ? profile.preferences.event_types
+        : Array.isArray(profile?.preferences?.eventTypes)
+          ? profile.preferences.eventTypes
+          : [];
+      const persistedRadius = profile?.preferences?.radius_km
+        ?? profile?.preferences?.radiusKm
+        ?? aois.find((aoi) => Number(aoi?.radius_km))?.radius_km
+        ?? userConfig?.radius
+        ?? 0;
+      const persistedCriticalOnly = localPreferences?.critical_only
+        ?? localPreferences?.criticalOnly
+        ?? profile?.preferences?.critical_only
+        ?? profile?.preferences?.criticalOnly
+        ?? userConfig?.criticalOnly
+        ?? false;
+      const persistedPushNotifications = localPreferences?.push_notifications
+        ?? localPreferences?.pushNotifications
+        ?? profile?.preferences?.push_notifications
+        ?? profile?.preferences?.pushNotifications
+        ?? userConfig?.pushNotifications
+        ?? true;
+      const persistedSoundVibration = localPreferences?.sound_vibration
+        ?? localPreferences?.soundVibration
+        ?? profile?.preferences?.sound_vibration
+        ?? profile?.preferences?.soundVibration
+        ?? userConfig?.soundVibration
+        ?? true;
+      const persistedShowMarkers = localPreferences?.show_event_markers
+        ?? localPreferences?.showEventMarkers
+        ?? profile?.preferences?.show_event_markers
+        ?? profile?.preferences?.showEventMarkers
+        ?? userConfig?.showEventMarkers
+        ?? true;
+      const persistedShowRiskZones = localPreferences?.show_risk_zones
+        ?? localPreferences?.showRiskZones
+        ?? profile?.preferences?.show_risk_zones
+        ?? profile?.preferences?.showRiskZones
+        ?? userConfig?.showRiskZones
+        ?? true;
+      const persistedDefaultMapType = localPreferences?.default_map_type
+        ?? localPreferences?.defaultMapType
+        ?? profile?.preferences?.default_map_type
+        ?? profile?.preferences?.defaultMapType
+        ?? userConfig?.defaultMapType
+        ?? '2D';
+      const persistedRefreshInterval = localPreferences?.refresh_interval
+        ?? localPreferences?.refreshInterval
+        ?? profile?.preferences?.refresh_interval
+        ?? profile?.preferences?.refreshInterval
+        ?? userConfig?.refreshInterval
+        ?? '1m';
+      const persistedOfflineCache = localPreferences?.offline_cache
+        ?? localPreferences?.offlineCache
+        ?? profile?.preferences?.offline_cache
+        ?? profile?.preferences?.offlineCache
+        ?? userConfig?.offlineCache
+        ?? true;
+      const persistedDataSaverMode = localPreferences?.data_saver_mode
+        ?? localPreferences?.dataSaverMode
+        ?? profile?.preferences?.data_saver_mode
+        ?? profile?.preferences?.dataSaverMode
+        ?? userConfig?.dataSaverMode
+        ?? false;
+      setCurrentDataPreferences({
+        offline_cache: Boolean(persistedOfflineCache),
+        data_saver_mode: Boolean(persistedDataSaverMode),
+      });
+      const persistedAois = aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean);
+
+      if (!persistedAois.length) {
+        console.log('[App] userConfig hydrate skipped: no AOIs available');
+        return;
+      }
+
+      console.log('[App] userConfig hydrate source', {
+        persistedEventTypes,
+        persistedRadius,
+        persistedAois,
+        localPreferences,
+        profilePreferences: profile?.preferences || null,
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      setUserConfig((prev) => ({
+        ...(prev || {}),
+        location: prev?.location || persistedAois[0],
+        aois: persistedAois,
+        radius: Number(persistedRadius) || 0,
+        eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (prev?.eventTypes || []),
+        criticalOnly: Boolean(persistedCriticalOnly),
+        pushNotifications: Boolean(persistedPushNotifications),
+        soundVibration: Boolean(persistedSoundVibration),
+        showEventMarkers: Boolean(persistedShowMarkers),
+        showRiskZones: Boolean(persistedShowRiskZones),
+        defaultMapType: persistedDefaultMapType,
+        refreshInterval: persistedRefreshInterval,
+        offlineCache: Boolean(persistedOfflineCache),
+        dataSaverMode: Boolean(persistedDataSaverMode),
+        preferences: {
+          ...(prev?.preferences || {}),
+          ...(profile?.preferences || {}),
+          ...localPreferences,
+          critical_only: Boolean(persistedCriticalOnly),
+          push_notifications: Boolean(persistedPushNotifications),
+          sound_vibration: Boolean(persistedSoundVibration),
+          show_event_markers: Boolean(persistedShowMarkers),
+          show_risk_zones: Boolean(persistedShowRiskZones),
+          default_map_type: persistedDefaultMapType,
+          refresh_interval: persistedRefreshInterval,
+          offline_cache: Boolean(persistedOfflineCache),
+          data_saver_mode: Boolean(persistedDataSaverMode),
+        },
+      }));
+      console.log('[App] userConfig hydrated', {
+        location: persistedAois[0],
+        aois: persistedAois,
+        radius: Number(persistedRadius) || 0,
+        eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (userConfig?.eventTypes || []),
+        criticalOnly: Boolean(persistedCriticalOnly),
+        pushNotifications: Boolean(persistedPushNotifications),
+        soundVibration: Boolean(persistedSoundVibration),
+        showEventMarkers: Boolean(persistedShowMarkers),
+        showRiskZones: Boolean(persistedShowRiskZones),
+        defaultMapType: persistedDefaultMapType,
+        refreshInterval: persistedRefreshInterval,
+        offlineCache: Boolean(persistedOfflineCache),
+        dataSaverMode: Boolean(persistedDataSaverMode),
+      });
+    };
+
+    hydrateUserConfig();
+
+    return () => {
+      cancelled = true;
+    };
   }, [aois, aoisLoading, authReady, isSignedIn, profile, profileLoading, setOnboardingComplete, setUserConfig, userConfig?.radius]);
 
   useEffect(() => {
     // no-op effect keeps auth state reactive for restored Clerk sessions
   }, [isLoaded, isSignedIn]);
 
+  const pushNotificationsEnabled = Boolean(
+    userConfig?.pushNotifications
+    ?? userConfig?.preferences?.push_notifications
+    ?? true
+  );
+
   useEffect(() => {
-    if (!isSignedIn) {
+    if (!isSignedIn || !pushNotificationsEnabled) {
       return;
     }
 
-    console.log('[App] Initializing notifications/realtime bridge');
+    console.log('[App] Initializing notifications');
     initNotifications().catch((err) => {
       console.warn('[LEONA Notifications] Init failed:', err.message);
     });
-
-    const unsubRealtime = onEventUpdate((update) => {
-      console.log('[App] Realtime event received for notification', {
-        type: update?.type,
-        eventId: update?.event?.id || update?.event?.event_id || null,
-        severity: update?.event?.severity || null,
+    getExpoPushToken()
+      .then((token) => {
+        if (!token) {
+          return null;
+        }
+        return syncPushToken(token);
+      })
+      .then((result) => {
+        if (result) {
+          console.log('[App] Push token sync result', result);
+        }
+      })
+      .catch((err) => {
+        console.warn('[App] Push token sync failed:', err.message);
       });
-      notifyRealtimeUpdate(update).catch((err) => {
-        console.warn('[LEONA Notifications] Schedule failed:', err.message);
+    consumeLastNotificationResponse()
+      .then((response) => {
+        if (response) {
+          return handleNotificationOpen(response);
+        }
+        return null;
+      })
+      .catch((err) => {
+        console.warn('[App] Last notification response check failed:', err.message);
       });
-    });
 
     const unsubNotifications = addNotificationResponseListener((response) => {
       console.log('[App] Notification response received', {
         data: response?.notification?.request?.content?.data || null,
       });
-      const event = response?.notification?.request?.content?.data?.event;
-      if (!event || !navigationRef.isReady()) {
-        console.log('[App] Notification tap ignored', {
-          hasEvent: !!event,
-          navReady: navigationRef.isReady(),
-        });
-        return;
-      }
-
-      console.log('[App] Navigating from notification tap', {
-        eventId: event.id || event.event_id || null,
-        title: event.title || null,
-      });
-      navigationRef.navigate('AlertsTab', {
-        screen: 'EventDetail',
-        params: { event },
+      handleNotificationOpen(response).catch((err) => {
+        console.warn('[App] Notification open handling failed:', err.message);
       });
     });
 
     return () => {
-      unsubRealtime?.();
       unsubNotifications?.();
     };
-  }, [isSignedIn]);
+  }, [handleNotificationOpen, isSignedIn, pushNotificationsEnabled]);
 
   if (!isLoaded || (isSignedIn && authReady && (aoisLoading || profileLoading))) {
-    return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
+    return <BrandedLoader />;
   }
 
-  const hasConfiguredAois = aois.length > 0;
-  const showApp = onboardingComplete || (isSignedIn && hasConfiguredAois);
+  const showApp = onboardingComplete;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

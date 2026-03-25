@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -11,9 +11,19 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import LeonaHeader from '../components/LeonaHeader';
+
+let SecureStore = null;
+try {
+  SecureStore = require('expo-secure-store');
+} catch {
+  SecureStore = null;
+}
+
+const COMMUNITY_POSTS_STORAGE_KEY = 'leona_community_posts_v1';
 
 // ─── INITIAL DATA ──────────────────────────────────────────────────────────────
 const INITIAL_POSTS = [];
@@ -35,6 +45,8 @@ const SUGGESTED_CONTACTS = [
   'LEONA System',
 ];
 
+const MAX_COMMUNITY_POST_LENGTH = 1000;
+
 // ─── COMMUNITY SCREEN ─────────────────────────────────────────────────────────
 const CommunityScreen = ({ navigation }) => {
   // ── Top-level section
@@ -45,6 +57,9 @@ const CommunityScreen = ({ navigation }) => {
   const [showNewPost, setShowNewPost] = useState(false);
   const [postText, setPostText] = useState('');
   const [postSelectedTags, setPostSelectedTags] = useState([]);
+  const [postsLoaded, setPostsLoaded] = useState(false);
+  const [publishNotice, setPublishNotice] = useState('');
+  const [postError, setPostError] = useState('');
 
   // ── INBOX state
   const [inboxTab, setInboxTab] = useState('ALL');
@@ -57,6 +72,52 @@ const CommunityScreen = ({ navigation }) => {
   // Unread count for badge
   const unreadCount = threads.filter((t) => t.unread).length;
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadStoredPosts = async () => {
+      if (!SecureStore?.getItemAsync) {
+        setPostsLoaded(true);
+        return;
+      }
+
+      try {
+        const raw = await SecureStore.getItemAsync(COMMUNITY_POSTS_STORAGE_KEY);
+        if (cancelled) {
+          return;
+        }
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            setPosts(parsed);
+          }
+        }
+      } catch (err) {
+        console.warn('[LEONA Community] Stored posts load failed:', err.message);
+      } finally {
+        if (!cancelled) {
+          setPostsLoaded(true);
+        }
+      }
+    };
+
+    loadStoredPosts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!postsLoaded || !SecureStore?.setItemAsync) {
+      return;
+    }
+
+    SecureStore.setItemAsync(COMMUNITY_POSTS_STORAGE_KEY, JSON.stringify(posts)).catch((err) => {
+      console.warn('[LEONA Community] Stored posts save failed:', err.message);
+    });
+  }, [posts, postsLoaded]);
+
   // ── FEED helpers ─────────────────────────────────────────────────────────────
   const togglePostTag = (tag) => {
     setPostSelectedTags((prev) =>
@@ -67,7 +128,18 @@ const CommunityScreen = ({ navigation }) => {
   };
 
   const handlePublishPost = () => {
-    if (!postText.trim()) return;
+    if (!postText.trim()) {
+      setPostError('Post text is required.');
+      return;
+    }
+
+    if (postText.length > MAX_COMMUNITY_POST_LENGTH) {
+      const message = `Posts must be ${MAX_COMMUNITY_POST_LENGTH} characters or fewer.`;
+      setPostError(message);
+      Alert.alert('Post too long', message);
+      return;
+    }
+
     const newPost = {
       id: Date.now().toString(),
       author: 'You',
@@ -84,6 +156,8 @@ const CommunityScreen = ({ navigation }) => {
     setPostText('');
     setPostSelectedTags([]);
     setShowNewPost(false);
+    setPostError('');
+    setPublishNotice('Saved on this device only. Community sync is unavailable, so this post was not published to other users.');
   };
 
   const renderPost = ({ item }) => (
@@ -141,8 +215,25 @@ const CommunityScreen = ({ navigation }) => {
 
   const renderFeed = () => (
     <>
+      <View style={styles.persistenceBanner}>
+        <Text style={styles.persistenceBannerTitle}>Local demo feed</Text>
+        <Text style={styles.persistenceBannerText}>
+          Community posts persist on this device after refresh, but they are not synced to other users yet.
+        </Text>
+      </View>
+
+      {!!publishNotice && (
+        <View style={styles.publishNoticeBanner}>
+          <Text style={styles.publishNoticeTitle}>Not published to community</Text>
+          <Text style={styles.publishNoticeText}>{publishNotice}</Text>
+        </View>
+      )}
+
       {/* Compose prompt */}
-      <TouchableOpacity style={styles.composePrompt} onPress={() => setShowNewPost(true)}>
+      <TouchableOpacity style={styles.composePrompt} onPress={() => {
+        setPostError('');
+        setShowNewPost(true);
+      }}>
         <View style={styles.composePromptAvatar}>
           <Text style={styles.avatarInitials}>YO</Text>
         </View>
@@ -178,6 +269,13 @@ const CommunityScreen = ({ navigation }) => {
         renderItem={renderPost}
         keyExtractor={(item) => item.id}
         ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+        ListEmptyComponent={() => (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyIcon}>✎</Text>
+            <Text style={styles.emptyText}>No posts yet</Text>
+            <Text style={styles.emptyHint}>Published posts stay on this device only until community sync is implemented.</Text>
+          </View>
+        )}
         ListFooterComponent={() => <View style={{ height: spacing.xl }} />}
       />
     </>
@@ -397,7 +495,10 @@ const CommunityScreen = ({ navigation }) => {
         visible={showNewPost}
         transparent
         animationType="slide"
-        onRequestClose={() => setShowNewPost(false)}
+        onRequestClose={() => {
+          setPostError('');
+          setShowNewPost(false);
+        }}
       >
         <KeyboardAvoidingView
           style={{ flex: 1 }}
@@ -407,7 +508,7 @@ const CommunityScreen = ({ navigation }) => {
           <View style={styles.composeModal}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>NEW POST</Text>
-              <TouchableOpacity onPress={() => setShowNewPost(false)}>
+              <TouchableOpacity onPress={() => { setPostError(''); setShowNewPost(false); }}>
                 <Text style={styles.modalClose}>✕</Text>
               </TouchableOpacity>
             </View>
@@ -429,11 +530,22 @@ const CommunityScreen = ({ navigation }) => {
               placeholder="Share an update, intelligence note, or observation..."
               placeholderTextColor={colors.textDim}
               value={postText}
-              onChangeText={setPostText}
+              onChangeText={(value) => {
+                if (postError) {
+                  setPostError('');
+                }
+                setPostText(value);
+              }}
               multiline
               textAlignVertical="top"
               autoFocus
+              maxLength={MAX_COMMUNITY_POST_LENGTH}
             />
+            <View style={styles.postMetaRow}>
+              <Text style={styles.postMetaText}>
+                {postText.length}/{MAX_COMMUNITY_POST_LENGTH}
+              </Text>
+            </View>
 
             {/* Tag selector */}
             <Text style={styles.modalSectionLabel}>ADD TAGS</Text>
@@ -456,12 +568,24 @@ const CommunityScreen = ({ navigation }) => {
               })}
             </View>
 
+            <View style={styles.modalWarningBox}>
+              <Text style={styles.modalWarningTitle}>Demo-only publishing</Text>
+              <Text style={styles.modalWarningText}>
+                This build saves posts locally on this device. It does not publish them to the shared community feed yet.
+              </Text>
+            </View>
+
+            {postError ? <Text style={styles.postErrorText}>{postError}</Text> : null}
+
             <TouchableOpacity
-              style={[styles.publishBtn, !postText.trim() && styles.publishBtnDisabled]}
+              style={[
+                styles.publishBtn,
+                (!postText.trim() || postText.length > MAX_COMMUNITY_POST_LENGTH) && styles.publishBtnDisabled,
+              ]}
               onPress={handlePublishPost}
-              disabled={!postText.trim()}
+              disabled={!postText.trim() || postText.length > MAX_COMMUNITY_POST_LENGTH}
             >
-              <Text style={styles.publishBtnText}>PUBLISH TO FEED</Text>
+              <Text style={styles.publishBtnText}>SAVE TO LOCAL FEED</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -664,6 +788,47 @@ const styles = StyleSheet.create({
   },
 
   // ── FEED ────────────────────────────────────────────────────
+  persistenceBanner: {
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(74,144,255,0.22)',
+    backgroundColor: 'rgba(74,144,255,0.1)',
+  },
+  persistenceBannerTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 4,
+    letterSpacing: 0.4,
+  },
+  persistenceBannerText: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  publishNoticeBanner: {
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,120,120,0.22)',
+    backgroundColor: 'rgba(96,24,24,0.24)',
+  },
+  publishNoticeTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  publishNoticeText: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
   composePrompt: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -916,6 +1081,13 @@ const styles = StyleSheet.create({
   emptyText: { color: colors.textDim, fontSize: 14 },
 
   // ── Modals (shared) ─────────────────────────────────────────
+  emptyHint: {
+    color: colors.textDim,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -972,6 +1144,21 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
     paddingTop: 0,
   },
+  postMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: -spacing.md,
+    marginBottom: spacing.lg,
+  },
+  postMetaText: {
+    color: colors.textDim,
+    fontSize: 11,
+  },
+  postErrorText: {
+    color: colors.critical,
+    fontSize: 12,
+    marginBottom: spacing.md,
+  },
   modalSectionLabel: {
     color: colors.textDim,
     fontSize: 10,
@@ -992,6 +1179,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   tagChipText: { fontSize: 11, fontWeight: '600' },
+  modalWarningBox: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,184,77,0.2)',
+    backgroundColor: 'rgba(255,184,77,0.08)',
+  },
+  modalWarningTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  modalWarningText: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
 
   // New Message modal specific
   fieldInput: {

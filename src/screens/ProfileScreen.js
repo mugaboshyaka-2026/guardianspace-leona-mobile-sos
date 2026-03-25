@@ -1,19 +1,27 @@
-import React, { useContext, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
+  ActivityIndicator,
+  Alert,
+  Platform,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
+  Text,
   TouchableOpacity,
-  SafeAreaView,
+  View,
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import { useAuth } from '../lib/auth';
 import { useProfile } from '../hooks/useEvents';
 import { AppContext } from '../../App';
+import { fetchRegisteredDevices, unregisterDevice } from '../lib/api';
 
 const ProfileScreen = ({ navigation }) => {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState('idle');
+  const [copyMessage, setCopyMessage] = useState('');
+  const [devices, setDevices] = useState([]);
+  const [devicesLoading, setDevicesLoading] = useState(true);
+  const [busyDeviceId, setBusyDeviceId] = useState(null);
   const { user: clerkUser, signOut } = useAuth();
   const { profile: apiProfile } = useProfile();
   const { userConfig, handleLogout } = useContext(AppContext);
@@ -32,10 +40,125 @@ const ProfileScreen = ({ navigation }) => {
     if (parts.length === 0) return 'U';
     return parts.slice(0, 2).map((part) => part[0]).join('').toUpperCase();
   }, [displayName]);
+  const configSources = [
+    apiProfile,
+    apiProfile?.settings,
+    apiProfile?.preferences,
+    userConfig,
+    userConfig?.settings,
+    userConfig?.preferences,
+  ].filter(Boolean);
 
-  const copyToClipboard = () => {
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const getConfigValue = (...keys) => {
+    for (const source of configSources) {
+      for (const key of keys) {
+        const value = source?.[key];
+        if (typeof value === 'string' && value.trim()) {
+          return value.trim();
+        }
+      }
+    }
+    return '';
+  };
+
+  const apiKeyValue = getConfigValue('api_key', 'apiKey');
+  const webhookUrlValue = getConfigValue('webhook_url', 'webhookUrl');
+  const maskedApiKey = apiKeyValue
+    ? `${apiKeyValue.slice(0, Math.min(8, apiKeyValue.length))}${apiKeyValue.length > 12 ? `••••${apiKeyValue.slice(-4)}` : ''}`
+    : 'Not configured';
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchRegisteredDevices()
+      .then((nextDevices) => {
+        if (!cancelled) {
+          setDevices(nextDevices);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('[Profile] Device list fetch failed:', err.message);
+          setDevices([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDevicesLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const copyToClipboard = async () => {
+    if (!apiKeyValue) {
+      setCopyState('error');
+      setCopyMessage('No API key is configured for this account.');
+      return;
+    }
+
+    try {
+      let copied = false;
+
+      try {
+        const Clipboard = require('expo-clipboard');
+        if (Clipboard?.setStringAsync) {
+          await Clipboard.setStringAsync(apiKeyValue);
+          copied = true;
+        }
+      } catch {
+        copied = false;
+      }
+
+      if (!copied && Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(apiKeyValue);
+        copied = true;
+      }
+
+      if (!copied) {
+        setCopyState('error');
+        setCopyMessage('Clipboard copy is unavailable on this device/build.');
+        return;
+      }
+
+      setCopyState('success');
+      setCopyMessage('API key copied to clipboard.');
+      setTimeout(() => {
+        setCopyState('idle');
+        setCopyMessage('');
+      }, 2000);
+    } catch (err) {
+      setCopyState('error');
+      setCopyMessage(err?.message || 'Clipboard copy failed.');
+    }
+  };
+
+  const handleRemoveDevice = (device) => {
+    Alert.alert(
+      'Remove device',
+      `Unregister ${device?.device_name || device?.platform || 'this device'}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setBusyDeviceId(device.id);
+            try {
+              await unregisterDevice(device.id);
+              setDevices((prev) => prev.filter((item) => item.id !== device.id));
+            } catch (err) {
+              Alert.alert('Unable to remove device', err?.message || 'Please try again.');
+            } finally {
+              setBusyDeviceId(null);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleSignOut = async () => {
@@ -63,7 +186,6 @@ const ProfileScreen = ({ navigation }) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Profile Header */}
         <View style={styles.profileHeader}>
           <View style={styles.avatarCircle}>
             <Text style={styles.avatarText}>{displayInitials}</Text>
@@ -73,7 +195,6 @@ const ProfileScreen = ({ navigation }) => {
           <Text style={styles.userRole}>Admin · {displayOrg}</Text>
         </View>
 
-        {/* ORGANISATION Section */}
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>ORGANISATION</Text>
           <InfoRow label="Organisation Name" value={displayOrg} />
@@ -82,30 +203,25 @@ const ProfileScreen = ({ navigation }) => {
           <InfoRow label="Plan" value="Enterprise" />
         </View>
 
-        {/* API ACCESS Section */}
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>API ACCESS</Text>
           <View style={styles.infoRow}>
             <View style={styles.infoLabel}>
               <Text style={styles.infoText}>API Key</Text>
             </View>
-            <TouchableOpacity
-              style={styles.apiKeyContainer}
-              onPress={copyToClipboard}
-            >
-              <Text style={styles.apiKeyValue}>
-                gs_live_••••••••7x4f
-              </Text>
-              <Text style={styles.copyButton}>
-                {copied ? '✓' : 'Copy'}
+            <TouchableOpacity style={styles.apiKeyContainer} onPress={copyToClipboard}>
+              <Text style={styles.apiKeyValue}>{maskedApiKey}</Text>
+              <Text style={[styles.copyButton, copyState === 'error' && styles.copyButtonError]}>
+                {copyState === 'success' ? '✓' : 'Copy'}
               </Text>
             </TouchableOpacity>
           </View>
-          <InfoRow
-            label="Webhook URL"
-            value="https://api.guardian..."
-            isUrl={true}
-          />
+          {!!copyMessage && (
+            <Text style={[styles.copyStatusText, copyState === 'error' && styles.copyStatusTextError]}>
+              {copyMessage}
+            </Text>
+          )}
+          <InfoRow label="Webhook URL" value={webhookUrlValue || 'Not configured'} isUrl />
           <View style={styles.infoRow}>
             <View style={styles.infoLabel}>
               <Text style={styles.infoText}>Requests Today</Text>
@@ -113,23 +229,37 @@ const ProfileScreen = ({ navigation }) => {
             <View style={styles.usageContainer}>
               <Text style={styles.usageText}>2,847 / 10,000</Text>
               <View style={styles.usageBar}>
-                <View
-                  style={[
-                    styles.usageBarFill,
-                    { width: '28.47%' },
-                  ]}
-                />
+                <View style={[styles.usageBarFill, { width: '28.47%' }]} />
               </View>
             </View>
           </View>
         </View>
 
-        {/* ACCOUNT Section */}
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>ACCOUNT</Text>
           <ChevronRow label="Change Password" />
-          <ToggleRow label="Two-Factor Auth" initialValue={true} />
-          <InfoRow label="Active Sessions" value="3 devices" />
+          <ToggleRow label="Two-Factor Auth" initialValue />
+          <InfoRow
+            label="Active Sessions"
+            value={devicesLoading ? 'Loading…' : `${devices.length} device${devices.length === 1 ? '' : 's'}`}
+          />
+          {devicesLoading ? (
+            <ActivityIndicator color={colors.blue} style={styles.devicesLoader} />
+          ) : devices.length > 0 ? (
+            devices.map((device) => (
+              <View key={device.id} style={styles.deviceRow}>
+                <View style={styles.deviceCopy}>
+                  <Text style={styles.deviceName}>{device.device_name || 'Registered device'}</Text>
+                  <Text style={styles.deviceMeta}>{(device.platform || 'unknown').toUpperCase()}</Text>
+                </View>
+                <TouchableOpacity onPress={() => handleRemoveDevice(device)} disabled={busyDeviceId === device.id}>
+                  <Text style={styles.removeDeviceText}>{busyDeviceId === device.id ? '...' : 'Remove'}</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.emptyDevicesText}>No registered push devices found.</Text>
+          )}
           <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
             <Text style={styles.signOutText}>Sign Out</Text>
           </TouchableOpacity>
@@ -158,7 +288,7 @@ const ChevronRow = ({ label }) => (
 );
 
 const ToggleRow = ({ label, initialValue }) => {
-  const [value, setValue] = React.useState(initialValue);
+  const [value] = React.useState(initialValue);
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoText}>{label}</Text>
@@ -300,6 +430,18 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: spacing.sm,
   },
+  copyButtonError: {
+    color: colors.critical,
+  },
+  copyStatusText: {
+    fontSize: 12,
+    color: colors.safe,
+    marginTop: spacing.sm,
+    lineHeight: 17,
+  },
+  copyStatusTextError: {
+    color: colors.critical,
+  },
   usageContainer: {
     alignItems: 'flex-end',
     gap: spacing.xs,
@@ -339,6 +481,40 @@ const styles = StyleSheet.create({
   },
   toggleTextActive: {
     color: colors.safe,
+  },
+  devicesLoader: {
+    paddingVertical: spacing.md,
+  },
+  deviceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  deviceCopy: {
+    flex: 1,
+  },
+  deviceName: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  deviceMeta: {
+    color: colors.textDim,
+    fontSize: 12,
+    marginTop: spacing.xs,
+  },
+  removeDeviceText: {
+    color: colors.critical,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  emptyDevicesText: {
+    color: colors.textDim,
+    fontSize: 12,
+    paddingVertical: spacing.md,
   },
   signOutButton: {
     paddingVertical: spacing.md,

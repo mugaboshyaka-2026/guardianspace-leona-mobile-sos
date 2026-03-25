@@ -103,6 +103,9 @@ const ThreadScreen = ({ route, navigation }) => {
   const [messages, setMessages] = useState(THREAD_MESSAGES.default);
   const [inputText, setInputText] = useState('');
   const flatListRef = useRef(null);
+  const pendingReplyTimeoutsRef = useRef(new Set());
+  const isScreenActiveRef = useRef(true);
+  const nextMessageIdRef = useRef(THREAD_MESSAGES.default.length);
 
   const scrollToBottom = () => {
     if (flatListRef.current) {
@@ -114,11 +117,27 @@ const ThreadScreen = ({ route, navigation }) => {
     scrollToBottom();
   }, [messages]);
 
+  useEffect(() => {
+    isScreenActiveRef.current = true;
+
+    return () => {
+      isScreenActiveRef.current = false;
+      pendingReplyTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
+      pendingReplyTimeoutsRef.current.clear();
+    };
+  }, []);
+
+  const createMessageId = () => {
+    const nextId = nextMessageIdRef.current;
+    nextMessageIdRef.current += 1;
+    return `msg-${nextId}`;
+  };
+
   const handleSend = () => {
     if (inputText.trim()) {
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const userMsg = {
-        id: Date.now().toString(),
+        id: createMessageId(),
         author: 'Kian M.',
         avatar: 'KM',
         role: 'Admin · Guardian Space',
@@ -145,9 +164,13 @@ const ThreadScreen = ({ route, navigation }) => {
         "Confirmed. Looping in LEONA for situational awareness.",
       ];
       const reply = AUTO_REPLIES[Math.floor(Math.random() * AUTO_REPLIES.length)];
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
+        pendingReplyTimeoutsRef.current.delete(timeoutId);
+        if (!isScreenActiveRef.current) {
+          return;
+        }
         const replyMsg = {
-          id: (Date.now() + 1).toString(),
+          id: createMessageId(),
           ...responder,
           text: reply,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -155,6 +178,7 @@ const ThreadScreen = ({ route, navigation }) => {
         };
         setMessages((prev) => [...prev, replyMsg]);
       }, 1200);
+      pendingReplyTimeoutsRef.current.add(timeoutId);
     }
   };
 

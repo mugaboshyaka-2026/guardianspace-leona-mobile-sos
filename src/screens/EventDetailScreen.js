@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -9,9 +9,10 @@ import {
   Dimensions,
   ActivityIndicator,
   Platform,
+  Modal,
 } from 'react-native';
 import { colors, sevColors, typeIcons, spacing, fonts, sevBg } from '../theme';
-import { getRelatedNews, addFavorite, removeFavorite, checkFavorite } from '../lib/api';
+import { getRelatedNews, addFavorite, removeFavorite, checkFavorite, isTimeoutError } from '../lib/api';
 
 const mapsModule = Platform.OS === 'web' ? null : require('react-native-maps');
 const MapView = mapsModule?.default;
@@ -46,6 +47,7 @@ const EventDetailScreen = ({ route, navigation }) => {
   const { event } = route.params || {};
   const [activeTab, setActiveTab] = useState('DETAILS');
   const [isFavorite, setIsFavorite] = useState(false);
+  const [isAssessmentVisible, setIsAssessmentVisible] = useState(false);
 
   // Check if event is favorited
   useEffect(() => {
@@ -74,24 +76,42 @@ const EventDetailScreen = ({ route, navigation }) => {
   const [is3D, setIs3D] = useState(true);
   const [relatedNews, setRelatedNews] = useState([]);
   const [newsLoading, setNewsLoading] = useState(false);
-  const [newsFailed, setNewsFailed] = useState(false);
+  const [newsError, setNewsError] = useState(null);
+  const [newsTimedOut, setNewsTimedOut] = useState(false);
+
+  const loadRelatedNews = useCallback(async () => {
+    if (!event?.id) {
+      return;
+    }
+
+    setNewsLoading(true);
+    setNewsError(null);
+    setNewsTimedOut(false);
+    try {
+      const data = await getRelatedNews(event.id);
+      setRelatedNews(data?.articles || []);
+    } catch (err) {
+      setNewsTimedOut(isTimeoutError(err));
+      setNewsError(err?.message || 'Related coverage could not be loaded.');
+      console.warn('[EventDetail] Related news failed:', err.message);
+    } finally {
+      setNewsLoading(false);
+    }
+  }, [event?.id]);
 
   // Fetch related news when FEED tab is selected
   useEffect(() => {
-    if (activeTab === 'FEED' && event?.id && relatedNews.length === 0 && !newsFailed) {
-      setNewsLoading(true);
-      getRelatedNews(event.id)
-        .then((data) => {
-          setRelatedNews(data?.articles || []);
-          setNewsFailed(false);
-        })
-        .catch((err) => {
-          setNewsFailed(true);
-          console.warn('[EventDetail] Related news failed:', err.message);
-        })
-        .finally(() => setNewsLoading(false));
+    if (activeTab === 'FEED' && event?.id && relatedNews.length === 0 && !newsLoading && !newsError) {
+      loadRelatedNews();
     }
-  }, [activeTab, event?.id, newsFailed, relatedNews.length]);
+  }, [activeTab, event?.id, loadRelatedNews, newsError, newsLoading, relatedNews.length]);
+
+  useEffect(() => {
+    setRelatedNews([]);
+    setNewsError(null);
+    setNewsTimedOut(false);
+    setNewsLoading(false);
+  }, [event?.id]);
 
   if (!event) {
     return (
@@ -102,8 +122,8 @@ const EventDetailScreen = ({ route, navigation }) => {
   }
 
   const tabs = ['DETAILS', 'IMAGERY', 'FEED', 'ECOSYSTEM'];
-  const eventLat = event.lat || -33.8688;
-  const eventLng = event.lng || 151.2093;
+  const eventLat = event.lat ?? -33.8688;
+  const eventLng = event.lng ?? 151.2093;
   const impactSignals = [
     { label: 'Population exposure', value: event.population || event.affected || 'Assessing', tone: event.population || event.affected ? 'high' : event.severity },
     { label: 'Infrastructure stress', value: event.area || event.wind || event.surge || 'Monitoring network strain', tone: event.severity },
@@ -209,6 +229,21 @@ const EventDetailScreen = ({ route, navigation }) => {
     'Push the latest incident summary to LEONA chat for coordinated next actions.',
   ].filter(Boolean);
   const sourceTags = toArray(event.source || event.sources);
+  const assessmentSummaryText = `This event has been classified as ${event.severity.toUpperCase()}. ${event.description || 'LEONA is actively coordinating intelligence across all relevant domain agents and the local Country Agent.'} ${
+    event.severity === 'critical'
+      ? 'Recommend immediate action and response coordination.'
+      : event.severity === 'high'
+      ? 'Alert and preparation measures are advised for affected areas.'
+      : 'Continued monitoring is recommended.'
+  }`;
+  const assessmentConfidence = '87%';
+  const assessmentAgentName = event.type ? `${event.type.charAt(0).toUpperCase()}${event.type.slice(1)} Specialist` : 'LEONA';
+  const recommendedAction =
+    event.severity === 'critical'
+      ? 'IMMEDIATE RESPONSE'
+      : event.severity === 'high'
+      ? 'ALERT & PREPARE'
+      : 'MONITOR';
 
   const renderStatItem = (label, value) => (
     <View style={styles.statItem}>
@@ -392,11 +427,26 @@ const EventDetailScreen = ({ route, navigation }) => {
 
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionLabel}>RELATED COVERAGE</Text>
-        <Text style={styles.sectionMetaText}>{relatedCoverage.length} items</Text>
+        <Text style={styles.sectionMetaText}>
+          {newsError ? 'Unavailable' : `${relatedCoverage.length} items`}
+        </Text>
       </View>
 
       {newsLoading ? (
         <ActivityIndicator color={colors.blue} style={{ paddingVertical: 40 }} />
+      ) : newsError ? (
+        <View style={styles.emptyStateCard}>
+          <Text style={styles.emptyStateTitle}>{newsTimedOut ? 'Request timed out' : 'Related coverage unavailable'}</Text>
+          <Text style={styles.placeholderText}>
+            {newsTimedOut
+              ? 'Related coverage took too long to load. Check your connection and retry.'
+              : 'We could not load related news for this event. Check your connection and try again.'}
+          </Text>
+          <Text style={styles.errorDetailText}>{newsError}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={loadRelatedNews}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
       ) : relatedCoverage.length > 0 ? (
         relatedCoverage.map((article) => (
           <View key={article.id} style={styles.coverageCard}>
@@ -553,6 +603,108 @@ const EventDetailScreen = ({ route, navigation }) => {
 
   return (
     <SafeAreaView style={styles.container}>
+      <Modal
+        visible={isAssessmentVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setIsAssessmentVisible(false)}
+      >
+        <View style={styles.assessmentModalBackdrop}>
+          <View style={styles.assessmentModalSheet}>
+            <View style={styles.assessmentModalHeader}>
+              <View style={styles.assessmentModalTitleWrap}>
+                <Text style={styles.assessmentModalEyebrow}>LEONA ASSESSMENT</Text>
+                <Text style={styles.assessmentModalTitle}>Full Assessment</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsAssessmentVisible(false)}
+                style={styles.assessmentModalClose}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.assessmentModalCloseText}>X</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.assessmentModalScroll}
+              contentContainerStyle={styles.assessmentModalContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.assessmentHeroPanel}>
+                <Text style={styles.assessmentHeroLabel}>CURRENT CLASSIFICATION</Text>
+                <Text style={[styles.assessmentHeroSeverity, { color: sevColors[event.severity] || colors.blueLight }]}>
+                  {event.severity.toUpperCase()}
+                </Text>
+                <Text style={styles.assessmentHeroText}>{assessmentSummaryText}</Text>
+              </View>
+
+              <View style={styles.assessmentGrid}>
+                <View style={styles.assessmentDetailCard}>
+                  <Text style={styles.assessmentDetailLabel}>Risk Level</Text>
+                  <Text style={[styles.assessmentDetailValue, { color: sevColors[event.severity] || colors.blueLight }]}>
+                    {event.severity.toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.assessmentDetailCard}>
+                  <Text style={styles.assessmentDetailLabel}>Confidence</Text>
+                  <Text style={styles.assessmentDetailValue}>{assessmentConfidence}</Text>
+                </View>
+                <View style={styles.assessmentDetailCard}>
+                  <Text style={styles.assessmentDetailLabel}>Primary Agent</Text>
+                  <Text style={styles.assessmentDetailValue}>{assessmentAgentName}</Text>
+                </View>
+                <View style={styles.assessmentDetailCard}>
+                  <Text style={styles.assessmentDetailLabel}>Recommended Action</Text>
+                  <Text style={styles.assessmentDetailValue}>{recommendedAction}</Text>
+                </View>
+              </View>
+
+              <View style={styles.assessmentSection}>
+                <Text style={styles.sectionLabel}>KEY SIGNALS</Text>
+                {impactSignals.map((signal) => (
+                  <View key={signal.label} style={styles.assessmentSignalRow}>
+                    <View style={styles.assessmentSignalTextWrap}>
+                      <Text style={styles.assessmentSignalLabel}>{signal.label}</Text>
+                      <Text style={styles.assessmentSignalValue}>{signal.value}</Text>
+                    </View>
+                    <View style={[styles.assessmentSignalTone, { borderColor: sevColors[signal.tone] || colors.blue }]}>
+                      <Text style={[styles.assessmentSignalToneText, { color: sevColors[signal.tone] || colors.blueLight }]}>
+                        {toTitle(signal.tone)}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.assessmentSection}>
+                <Text style={styles.sectionLabel}>OPERATIONAL ACTIONS</Text>
+                {operationalActions.map((item, idx) => (
+                  <View key={`${item}-${idx}`} style={styles.actionRow}>
+                    <Text style={styles.actionIndex}>{idx + 1}</Text>
+                    <Text style={styles.actionText}>{item}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.assessmentSection}>
+                <Text style={styles.sectionLabel}>EVENT CONTEXT</Text>
+                <View style={styles.assessmentContextCard}>
+                  <Text style={styles.assessmentContextText}>
+                    {event.location || event.location_name || 'Unknown location'}
+                  </Text>
+                  <Text style={styles.assessmentContextMeta}>
+                    {formatDisplayDate(event.updated_at || event.created_at)}
+                  </Text>
+                  <Text style={styles.assessmentContextBody}>
+                    {event.description || 'Detailed incident narrative is still being built from live telemetry.'}
+                  </Text>
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {sharedHeader}
 
       <ScrollView
@@ -693,38 +845,24 @@ const EventDetailScreen = ({ route, navigation }) => {
               </View>
               <View style={styles.assessmentRow}>
                 <Text style={styles.assessmentLabel}>Recommended Action</Text>
-                <Text style={styles.assessmentValue}>
-                  {event.severity === 'critical'
-                    ? 'IMMEDIATE RESPONSE'
-                    : event.severity === 'high'
-                    ? 'ALERT & PREPARE'
-                    : 'MONITOR'}
-                </Text>
+                <Text style={styles.assessmentValue}>{recommendedAction}</Text>
               </View>
               <View style={styles.assessmentRow}>
                 <Text style={styles.assessmentLabel}>Confidence</Text>
-                <Text style={styles.assessmentValue}>87%</Text>
+                <Text style={styles.assessmentValue}>{assessmentConfidence}</Text>
               </View>
               <View style={styles.assessmentRow}>
                 <Text style={styles.assessmentLabel}>Agents Active</Text>
                 <Text style={[styles.assessmentValue, { color: colors.blue }]}>
-                  {event.type ? event.type.charAt(0).toUpperCase() + event.type.slice(1) + ' Specialist' : 'LEONA'}
+                  {assessmentAgentName}
                 </Text>
               </View>
             </View>
             <TouchableOpacity
               style={styles.leonaButton}
-              onPress={() => navigation.navigate('LeonaTab', {
-                screen: 'LeonaChat',
-                params: {
-                  initialSection: 'CHAT',
-                  requestKey: `event-${event.id || event.event_id || Date.now()}`,
-                  contextEvent: event,
-                  initialPrompt: `Analyze this event and give next actions.\nTitle: ${event.title || 'Untitled event'}\nLocation: ${event.location || 'unknown location'}\nSeverity: ${event.severity || 'unknown'}\nType: ${event.type || event.category || 'unknown'}\nDescription: ${event.description || 'No description provided.'}`,
-                },
-              })}
+              onPress={() => setIsAssessmentVisible(true)}
             >
-              <Text style={styles.leonaButtonText}>CHAT WITH AGENT →</Text>
+              <Text style={styles.leonaButtonText}>VIEW FULL ASSESSMENT -></Text>
             </TouchableOpacity>
           </View>
 
@@ -1324,6 +1462,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  errorDetailText: {
+    color: colors.critical,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.blue,
+    backgroundColor: colors.blueDim,
+  },
+  retryButtonText: {
+    color: colors.blueLight,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
   ecosystemGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1425,6 +1584,183 @@ const styles = StyleSheet.create({
     color: colors.textSec,
     fontSize: 12,
     lineHeight: 18,
+  },
+  assessmentModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(2, 6, 23, 0.72)',
+    justifyContent: 'flex-end',
+  },
+  assessmentModalSheet: {
+    maxHeight: '88%',
+    backgroundColor: colors.bg,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  assessmentModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  assessmentModalTitleWrap: {
+    gap: 4,
+  },
+  assessmentModalEyebrow: {
+    color: colors.purpleLight,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  assessmentModalTitle: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  assessmentModalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  assessmentModalCloseText: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  assessmentModalScroll: {
+    flexGrow: 0,
+  },
+  assessmentModalContent: {
+    padding: spacing.lg,
+    gap: spacing.lg,
+  },
+  assessmentHeroPanel: {
+    backgroundColor: colors.purpleDim,
+    borderWidth: 1,
+    borderColor: colors.purple,
+    borderRadius: 16,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  assessmentHeroLabel: {
+    color: colors.purpleLight,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  assessmentHeroSeverity: {
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  assessmentHeroText: {
+    color: colors.textSec,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  assessmentGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+  },
+  assessmentDetailCard: {
+    width: '47%',
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: spacing.md,
+    gap: 6,
+  },
+  assessmentDetailLabel: {
+    color: colors.textDim,
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+  },
+  assessmentDetailValue: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  assessmentSection: {
+    gap: spacing.md,
+  },
+  assessmentSignalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  assessmentSignalTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  assessmentSignalLabel: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  assessmentSignalValue: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  assessmentSignalTone: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+  assessmentSignalToneText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  assessmentContextCard: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  assessmentContextText: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  assessmentContextMeta: {
+    color: colors.blueLight,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  assessmentContextBody: {
+    color: colors.textSec,
+    fontSize: 12,
+    lineHeight: 19,
   },
 
   bottomSpacer: {

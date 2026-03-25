@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useContext, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,13 +8,44 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { colors, spacing } from '../theme';
+import { AppContext } from '../../App';
+import { PRODUCT_CONFIGS, getProductConfig } from '../lib/products';
 
 const SubscriptionScreen = ({ navigation }) => {
+  const { userConfig, setUserConfig } = useContext(AppContext);
+  const currentPlan = getProductConfig(userConfig?.product);
+  const plans = useMemo(
+    () => [
+      {
+        ...PRODUCT_CONFIGS.leona_plus,
+        price: 'Free',
+        features: ['25 visible events', 'Individual monitoring', 'Core hazard layers', 'Chat + briefs'],
+      },
+      {
+        ...PRODUCT_CONFIGS.leona_pro,
+        price: '$49/mo',
+        features: ['75 visible events', 'Community feed', 'Video agent access', 'Expanded map layers'],
+      },
+      {
+        ...PRODUCT_CONFIGS.leona_enterprise,
+        price: 'Custom',
+        features: ['Unlimited events', 'Full map coverage', 'Video + community', 'Operational team scale'],
+      },
+    ],
+    []
+  );
   const invoices = [
     { month: 'Mar 2026', amount: 2400, date: 'March 1, 2026' },
     { month: 'Feb 2026', amount: 2400, date: 'February 1, 2026' },
     { month: 'Jan 2026', amount: 2400, date: 'January 1, 2026' },
   ];
+
+  const handlePlanSelect = (planId) => {
+    setUserConfig((prev) => ({
+      ...(prev || {}),
+      product: planId,
+    }));
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -31,89 +62,40 @@ const SubscriptionScreen = ({ navigation }) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Current Plan Card */}
         <View style={styles.currentPlanCard}>
           <View style={styles.planBadgeContainer}>
-            <View style={styles.planBadge}>
-              <Text style={styles.planBadgeText}>ENTERPRISE</Text>
+            <View style={[styles.planBadge, { backgroundColor: currentPlan.accent }]}>
+              <Text style={styles.planBadgeText}>{currentPlan.label.toUpperCase()}</Text>
             </View>
           </View>
           <Text style={styles.planCardOrg}>Guardian Space Inc.</Text>
-          <Text style={styles.planCardBilling}>Billed annually</Text>
+          <Text style={styles.planCardBilling}>{currentPlan.description}</Text>
           <Text style={styles.planCardRenewal}>Renews: March 15, 2027</Text>
 
-          {/* Usage Stats */}
           <View style={styles.usageStatsContainer}>
-            <UsageStat
-              label="API Calls"
-              used={2847}
-              total={10000}
-              percent={28.47}
-            />
-            <UsageStat
-              label="Users"
-              used={8}
-              total={12}
-              percent={66.67}
-            />
-            <UsageStat
-              label="Storage"
-              used={2.1}
-              total={5}
-              percent={42}
-              unit="GB"
-            />
+            <UsageStat label="API Calls" used={2847} total={10000} percent={28.47} />
+            <UsageStat label="Users" used={8} total={12} percent={66.67} />
+            <UsageStat label="Storage" used={2.1} total={5} percent={42} unit="GB" />
           </View>
         </View>
 
-        {/* Plan Comparison */}
         <View style={styles.planComparisonSection}>
           <Text style={styles.sectionHeader}>PLAN COMPARISON</Text>
-
-          <PlanCard
-            name="GUARDIAN"
-            price="Free"
-            features={[
-              '5 events',
-              '1 user',
-              'Basic map',
-              'Community access',
-            ]}
-            borderColor={colors.panelLight}
-            backgroundColor={colors.panel}
-          />
-
-          <PlanCard
-            name="PROFESSIONAL"
-            price="$49/mo"
-            features={[
-              '50 events',
-              '5 users',
-              'All data sources',
-              'LEONA AI basic',
-            ]}
-            borderColor={colors.blue}
-            backgroundColor={colors.panel}
-          />
-
-          <PlanCard
-            name="ENTERPRISE"
-            price="Custom"
-            badge="CURRENT"
-            features={[
-              'Unlimited events',
-              'Unlimited users',
-              'Full API',
-              'LEONA AI Pro',
-              'Dedicated support',
-            ]}
-            borderColor={colors.purple}
-            backgroundColor={colors.panel}
-            isCurrent={true}
-          />
+          {plans.map((plan) => (
+            <PlanCard
+              key={plan.id}
+              name={plan.label.toUpperCase()}
+              price={plan.price}
+              badge={plan.id === currentPlan.id ? 'CURRENT' : 'SWITCH'}
+              features={plan.features}
+              borderColor={plan.accent}
+              backgroundColor={colors.panel}
+              isCurrent={plan.id === currentPlan.id}
+              onPress={() => handlePlanSelect(plan.id)}
+            />
+          ))}
         </View>
 
-        {/* Billing History */}
         <View style={styles.billingHistorySection}>
           <Text style={styles.sectionHeader}>BILLING HISTORY</Text>
           {invoices.map((invoice, index) => (
@@ -123,9 +105,7 @@ const SubscriptionScreen = ({ navigation }) => {
                 <Text style={styles.invoiceDate}>{invoice.date}</Text>
               </View>
               <View style={styles.invoiceRight}>
-                <Text style={styles.invoiceAmount}>
-                  ${invoice.amount.toLocaleString()}
-                </Text>
+                <Text style={styles.invoiceAmount}>${invoice.amount.toLocaleString()}</Text>
                 <TouchableOpacity>
                   <Text style={styles.downloadButton}>Download</Text>
                 </TouchableOpacity>
@@ -134,7 +114,6 @@ const SubscriptionScreen = ({ navigation }) => {
           ))}
         </View>
 
-        {/* Footer Buttons */}
         <View style={styles.footerButtons}>
           <TouchableOpacity style={styles.contactSalesButton}>
             <Text style={styles.contactSalesText}>Contact Sales</Text>
@@ -157,12 +136,7 @@ const UsageStat = ({ label, used, total, percent, unit = '' }) => (
       </Text>
     </View>
     <View style={styles.usageStatBar}>
-      <View
-        style={[
-          styles.usageStatBarFill,
-          { width: `${percent}%` },
-        ]}
-      />
+      <View style={[styles.usageStatBarFill, { width: `${percent}%` }]} />
     </View>
   </View>
 );
@@ -175,8 +149,9 @@ const PlanCard = ({
   borderColor,
   backgroundColor,
   isCurrent,
+  onPress,
 }) => (
-  <View
+  <TouchableOpacity
     style={[
       styles.planCard,
       {
@@ -185,14 +160,15 @@ const PlanCard = ({
         borderWidth: isCurrent ? 2 : 1,
       },
     ]}
+    activeOpacity={0.85}
+    onPress={onPress}
+    disabled={isCurrent}
   >
     <View style={styles.planCardHeader}>
       <Text style={styles.planCardName}>{name}</Text>
-      {isCurrent && (
-        <View style={styles.currentBadge}>
-          <Text style={styles.currentBadgeText}>{badge}</Text>
-        </View>
-      )}
+      <View style={styles.currentBadge}>
+        <Text style={styles.currentBadgeText}>{badge}</Text>
+      </View>
     </View>
     <Text style={styles.planCardPrice}>{price}</Text>
     <View style={styles.planCardFeatures}>
@@ -203,7 +179,8 @@ const PlanCard = ({
         </View>
       ))}
     </View>
-  </View>
+    {!isCurrent && <Text style={styles.planActionText}>Tap to switch plan</Text>}
+  </TouchableOpacity>
 );
 
 const styles = StyleSheet.create({
@@ -252,7 +229,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   planBadge: {
-    backgroundColor: colors.purple,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
     borderRadius: 4,
@@ -319,9 +295,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: colors.textSec,
-    letterSpacing: 1.2,
-    marginBottom: spacing.md,
-    marginTop: spacing.lg,
+    letterSpacing: 1,
+    marginBottom: spacing.lg,
   },
   planCard: {
     borderRadius: 8,
@@ -338,13 +313,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: colors.text,
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   currentBadge: {
-    backgroundColor: colors.purple,
+    backgroundColor: colors.purpleDim,
+    borderRadius: 4,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: 3,
+    paddingVertical: 3,
   },
   currentBadgeText: {
     fontSize: 10,
@@ -360,6 +335,12 @@ const styles = StyleSheet.create({
   },
   planCardFeatures: {
     gap: spacing.sm,
+  },
+  planActionText: {
+    marginTop: spacing.md,
+    color: colors.blue,
+    fontSize: 12,
+    fontWeight: '700',
   },
   featureItem: {
     flexDirection: 'row',
@@ -389,10 +370,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   invoiceMonth: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: colors.text,
-    marginBottom: spacing.xs,
+    marginBottom: 2,
   },
   invoiceDate: {
     fontSize: 12,
@@ -400,42 +381,37 @@ const styles = StyleSheet.create({
   },
   invoiceRight: {
     alignItems: 'flex-end',
-    gap: spacing.xs,
+    gap: 4,
   },
   invoiceAmount: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
     color: colors.text,
   },
   downloadButton: {
     fontSize: 12,
-    color: colors.blue,
     fontWeight: '600',
+    color: colors.blue,
   },
   footerButtons: {
     gap: spacing.md,
-    marginTop: spacing.xl,
     marginBottom: spacing.xl,
   },
   contactSalesButton: {
-    borderWidth: 1,
-    borderColor: colors.blue,
-    borderRadius: 6,
+    backgroundColor: colors.blue,
+    borderRadius: 8,
     paddingVertical: spacing.md,
     alignItems: 'center',
   },
   contactSalesText: {
-    fontSize: 16,
+    color: colors.white,
+    fontSize: 14,
     fontWeight: '700',
-    color: colors.blue,
-    letterSpacing: 1,
   },
   cancelText: {
+    color: colors.textDim,
     fontSize: 13,
-    color: colors.critical,
-    fontWeight: '600',
     textAlign: 'center',
-    paddingVertical: spacing.sm,
   },
 });
 

@@ -15,12 +15,14 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
-import { useMyEvents, useWorldEvents, useAOIs, useLeonaChat, useLeonaBrief } from '../hooks/useEvents';
+import { isAccessDeniedError, useMyEvents, useWorldEvents, useAOIs, useLeonaChat, useLeonaBrief } from '../hooks/useEvents';
 import LeonaHeader from '../components/LeonaHeader';
+import SharedMarkdownMessage from '../components/MarkdownMessage';
 import { AppContext } from '../../App';
 import { getProductConfig, limitEventsForProduct } from '../lib/products';
+import { filterEventsForConfig } from '../lib/locality';
+import { useAuth } from '../lib/auth';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 const { width } = Dimensions.get('window');
@@ -28,6 +30,19 @@ const { width } = Dimensions.get('window');
 function extractBriefText(brief) {
   if (!brief) return '';
   return brief.brief || brief.summary || brief.text || brief.content || '';
+}
+
+function normalizeBriefText(text = '') {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function parseInlineSegments(text = '') {
@@ -235,8 +250,22 @@ function MarkdownMessage({ text, isAgent }) {
   );
 }
 
+const ChatMessageBubble = React.memo(function ChatMessageBubble({ item }) {
+  const isAgent = item.type === 'agent';
+
+  return (
+    <View style={[styles.messageBubbleContainer, isAgent ? styles.agentContainer : styles.userContainer]}>
+      {isAgent && <Image source={leonaAvatar} style={styles.chatAvatarImage} />}
+      <View style={[styles.messageBubble, isAgent ? styles.agentBubble : styles.userBubble]}>
+        <SharedMarkdownMessage text={item.text} tone={isAgent ? 'agent' : 'user'} />
+      </View>
+    </View>
+  );
+});
+
 const LeonaChatScreen = ({ navigation, route }) => {
   const { userConfig } = useContext(AppContext);
+  const { isLoaded: authLoaded, isSignedIn, authReady } = useAuth();
   const productConfig = getProductConfig(userConfig?.product);
   const [activeSection, setActiveSection] = useState('CHAT');
   const [activeBriefTab, setActiveBriefTab] = useState('MY');   // 'MY' | 'WORLD'
@@ -245,6 +274,8 @@ const LeonaChatScreen = ({ navigation, route }) => {
   const flatListRef = useRef(null);
   const [pinnedEventIds, setPinnedEventIds] = useState(new Set());
   const lastHandledRequestRef = useRef(null);
+  const myDataAuthEnabled = isSignedIn && authReady;
+  const myDataRequiresAuth = authLoaded && !myDataAuthEnabled;
 
   const togglePin = (eventId) => {
     setPinnedEventIds((prev) => {
@@ -256,10 +287,22 @@ const LeonaChatScreen = ({ navigation, route }) => {
   };
 
   // ── Live API data ──
-  const { messages, sending, send: sendChat } = useLeonaChat();
-  const { events: myEvents } = useMyEvents();
+  const { messages, sending, hasQueuedRequest, send: sendChat, setMessages } = useLeonaChat();
+  const { events: myEvents, error: myEventsError } = useMyEvents(myDataAuthEnabled);
   const { events: worldEvents } = useWorldEvents();
-  const { aois } = useAOIs();
+  const { aois, error: aoisError } = useAOIs(myDataAuthEnabled);
+  const myDataUnavailable = myDataRequiresAuth || isAccessDeniedError(myEventsError) || isAccessDeniedError(aoisError);
+  const userAois = useMemo(() => {
+    if (myDataUnavailable) {
+      return [];
+    }
+    if (Array.isArray(userConfig?.aois) && userConfig.aois.length > 0) {
+      return userConfig.aois;
+    }
+    return aois
+      .map((aoi) => aoi?.name || aoi?.location_name || aoi?.location || String(aoi))
+      .filter(Boolean);
+  }, [aois, myDataUnavailable, userConfig?.aois]);
   const EVENTS = useMemo(
     () => limitEventsForProduct(
       [...new Map([...myEvents, ...worldEvents].map((event) => [event.id, event])).values()],
@@ -267,7 +310,13 @@ const LeonaChatScreen = ({ navigation, route }) => {
     ),
     [myEvents, userConfig?.product, worldEvents]
   );
-  const USER_AOIS = useMemo(() => aois.map((a) => a.name || a), [aois]);
+  const myScopedEvents = useMemo(
+    () => limitEventsForProduct(
+      filterEventsForConfig(myEvents, userConfig, 'local'),
+      userConfig?.product
+    ),
+    [myEvents, userConfig]
+  );
 
   // Top-level tabs: CHAT (left) · BRIEFS (right) — equal width
   const sections = [
@@ -292,10 +341,10 @@ const LeonaChatScreen = ({ navigation, route }) => {
     monitoring: EVENTS.filter((e) => e.severity === 'monitoring').length,
   };
   const mySeverityCounts = {
-    critical: myEvents.filter((e) => e.severity === 'critical').length,
-    high: myEvents.filter((e) => e.severity === 'high').length,
-    elevated: myEvents.filter((e) => e.severity === 'elevated').length,
-    monitoring: myEvents.filter((e) => e.severity === 'monitoring').length,
+    critical: myScopedEvents.filter((e) => e.severity === 'critical').length,
+    high: myScopedEvents.filter((e) => e.severity === 'high').length,
+    elevated: myScopedEvents.filter((e) => e.severity === 'elevated').length,
+    monitoring: myScopedEvents.filter((e) => e.severity === 'monitoring').length,
   };
 
   const severityOrder = { critical: 0, high: 1, elevated: 2, monitoring: 3 };
@@ -304,8 +353,8 @@ const LeonaChatScreen = ({ navigation, route }) => {
     [EVENTS]
   );
   const myTopEvents = useMemo(
-    () => [...myEvents].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]).slice(0, 5),
-    [myEvents]
+    () => [...myScopedEvents].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]).slice(0, 5),
+    [myScopedEvents]
   );
   const worldThreatScore = Math.min(100, (
     severityCounts.critical * 20 +
@@ -326,8 +375,10 @@ const LeonaChatScreen = ({ navigation, route }) => {
   }), [EVENTS.length, severityCounts, topEvents]);
   const myBriefContext = useMemo(() => ({
     scope: 'my',
-    aois: USER_AOIS,
-    event_count: myEvents.length,
+    aois: userAois,
+    radius_km: userConfig?.radius || 0,
+    event_types: userConfig?.eventTypes || [],
+    event_count: myScopedEvents.length,
     severity_counts: mySeverityCounts,
     events: myTopEvents.map((event) => ({
       id: event.id,
@@ -335,13 +386,64 @@ const LeonaChatScreen = ({ navigation, route }) => {
       severity: event.severity,
       location: event.location,
     })),
-  }), [USER_AOIS, myEvents.length, mySeverityCounts, myTopEvents]);
-  const { brief: worldBrief } = useLeonaBrief(worldBriefContext);
-  const { brief: myBrief } = useLeonaBrief(myBriefContext);
+  }), [myScopedEvents.length, mySeverityCounts, myTopEvents, userAois, userConfig?.eventTypes, userConfig?.radius]);
+  const { brief: worldBrief, loading: worldBriefLoading } = useLeonaBrief(
+    worldBriefContext,
+    activeSection === 'BRIEF' && activeBriefTab === 'WORLD'
+  );
+  const { brief: myBrief, loading: myBriefLoading } = useLeonaBrief(
+    myBriefContext,
+    activeSection === 'BRIEF' && activeBriefTab === 'MY' && !myDataUnavailable
+  );
   const worldNarrative = extractBriefText(worldBrief)
     || `${EVENTS.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`;
-  const myNarrative = extractBriefText(myBrief)
-    || `Active monitoring across ${USER_AOIS.length} Areas of Interest with ${myEvents.length} live events currently matched to your scope.`;
+  const myNarrative = myDataUnavailable
+    ? 'My Brief is unavailable until you sign in with a valid account. LEONA is not showing fallback monitoring data.'
+    : extractBriefText(myBrief)
+      || `Active monitoring across ${userAois.length} Areas of Interest with ${myScopedEvents.length} live events currently matched to your scope.`;
+  const chatContext = useMemo(() => ({
+    scope: 'local_aoi',
+    aois: userAois,
+    radius_km: userConfig?.radius || 0,
+    event_types: userConfig?.eventTypes || [],
+    current_view: {
+      section: activeSection,
+      brief_tab: activeBriefTab,
+    },
+    event_summary: {
+      local_event_count: myScopedEvents.length,
+      global_event_count: EVENTS.length,
+      local_severity_counts: mySeverityCounts,
+      global_severity_counts: severityCounts,
+    },
+    current_events: myTopEvents.map((event) => ({
+      id: event.id,
+      title: event.title,
+      type: event.type,
+      severity: event.severity,
+      location: event.location,
+    })),
+  }), [
+    EVENTS.length,
+    activeBriefTab,
+    activeSection,
+    myScopedEvents.length,
+    mySeverityCounts,
+    myTopEvents,
+    severityCounts,
+    userAois,
+    userConfig?.eventTypes,
+    userConfig?.radius,
+  ]);
+  const sendChatWithContext = useCallback((text, options = {}) => (
+    sendChat(text, {
+      ...options,
+      context: {
+        ...chatContext,
+        ...(options.context || {}),
+      },
+    })
+  ), [chatContext, sendChat]);
 
   const quickChips = [
     'Critical events',
@@ -356,74 +458,152 @@ const LeonaChatScreen = ({ navigation, route }) => {
     if (flatListRef.current) flatListRef.current.scrollToEnd({ animated: true });
   };
 
-  useEffect(() => { scrollToBottom(); }, [messages]);
+  useEffect(() => { scrollToBottom(); }, [messages.length]);
 
   const handleChipPress = (chipText) => {
-    sendChat(chipText);
+    if (hasQueuedRequest) return;
+    sendChatWithContext(chipText, {
+      requestKind: 'quick-chip',
+      pendingText: `LEONA is working on "${chipText}"...`,
+      failureText: 'LEONA could not finish that quick request right now. Please retry once the current response completes.',
+    });
   };
 
+  const handleAskBriefPress = useCallback(() => {
+    setActiveSection('CHAT');
+
+    if (sending) return;
+
+    const isMyBrief = activeBriefTab === 'MY';
+    if (isMyBrief && myDataUnavailable) return;
+    const prompt = isMyBrief
+      ? `Give me a concise briefing for my areas of interest: ${userAois.join(', ') || 'my configured AOIs'}. Current matched events: ${myScopedEvents.length}. Selected event types: ${(userConfig?.eventTypes || []).join(', ') || 'all configured types'}. Radius: ${userConfig?.radius || 0} km.`
+      : `Give me a concise global risk briefing. Current global event count: ${EVENTS.length}. Critical: ${severityCounts.critical}, High: ${severityCounts.high}, Elevated: ${severityCounts.elevated}, Monitoring: ${severityCounts.monitoring}.`;
+    const pendingMessageId = `pending-brief-${Date.now()}`;
+
+    setMessages((prev) => ([
+      ...prev,
+      { id: `brief-user-${Date.now()}`, type: 'user', text: prompt },
+      {
+        id: pendingMessageId,
+        type: 'agent',
+        text: 'LEONA is preparing your detailed brief...',
+        pending: true,
+      },
+    ]));
+
+    sendChat(prompt, {
+      requestKind: 'brief-handoff',
+      pendingText: 'LEONA is preparing your detailed brief...',
+      failureText: 'LEONA could not generate the brief right now. Please retry from the brief screen or ask a shorter follow-up.',
+      skipLocalEcho: true,
+      pendingMessageId,
+      context: {
+        ...chatContext,
+        scope: isMyBrief ? 'local_aoi' : 'world',
+        current_view: {
+          section: 'CHAT',
+          brief_tab: activeBriefTab,
+        },
+        current_events: (isMyBrief ? myTopEvents : topEvents).map((event) => ({
+          id: event.id,
+          title: event.title,
+          type: event.type,
+          severity: event.severity,
+          location: event.location,
+        })),
+      },
+    });
+  }, [
+    EVENTS.length,
+    activeBriefTab,
+    chatContext,
+    myScopedEvents.length,
+    myTopEvents,
+    sending,
+    sendChat,
+    setMessages,
+    severityCounts,
+    topEvents,
+    myDataUnavailable,
+    userAois,
+    userConfig?.eventTypes,
+    userConfig?.radius,
+  ]);
+
   const handleSend = () => {
+    if (sending) return;
     if (inputText.trim()) {
-      sendChat(inputText.trim());
+      sendChatWithContext(inputText.trim());
       setInputText('');
     }
   };
 
-  useFocusEffect(
-    useCallback(() => {
-      const requestKey = route?.params?.requestKey;
-      const initialSection = route?.params?.initialSection;
-      const initialBriefTab = route?.params?.initialBriefTab;
-      const initialPrompt = route?.params?.initialPrompt;
+  useEffect(() => {
+    const requestKey = route?.params?.requestKey;
+    const initialSection = route?.params?.initialSection;
+    const initialBriefTab = route?.params?.initialBriefTab;
+    const initialPrompt = route?.params?.initialPrompt;
 
-      if (initialSection) {
-        setActiveSection(initialSection);
-      }
+    if (initialSection) {
+      setActiveSection(initialSection);
+    }
 
-      if (initialBriefTab) {
-        setActiveBriefTab(initialBriefTab);
-      }
+    if (initialBriefTab) {
+      setActiveBriefTab(initialBriefTab);
+    }
 
-      if (!requestKey || !initialPrompt || lastHandledRequestRef.current === requestKey) {
-        return undefined;
-      }
+    const latestUserMessage = [...messages].reverse().find((message) => message?.type === 'user');
+    const promptAlreadyQueued = latestUserMessage?.text === initialPrompt;
 
-      console.log('[LeonaChatScreen] event-analysis:queued', {
-        requestKey,
-        initialSection: initialSection || null,
-        initialBriefTab: initialBriefTab || null,
-        promptLength: initialPrompt.length,
-      });
-
-      const timer = setTimeout(() => {
+    if (!requestKey || !initialPrompt || lastHandledRequestRef.current === requestKey || promptAlreadyQueued) {
+      if (promptAlreadyQueued) {
         lastHandledRequestRef.current = requestKey;
-        setInputText('');
-        console.log('[LeonaChatScreen] event-analysis:dispatch', {
-          requestKey,
-        });
-        sendChat(initialPrompt, {
-          requestKind: 'event-analysis',
-          pendingText: 'LEONA is analyzing this event. Pulling current signals, impact context, and recommended actions...',
-          failureText: 'LEONA could not finish the event analysis in time. Please retry from the event or ask a shorter follow-up question.',
-        });
-        navigation.setParams({
-          requestKey: undefined,
-          initialPrompt: undefined,
-          initialSection,
-          initialBriefTab,
-        });
-      }, 150);
+      }
+      return undefined;
+    }
 
-      return () => clearTimeout(timer);
-    }, [
-      navigation,
-      route?.params?.initialBriefTab,
-      route?.params?.initialPrompt,
-      route?.params?.initialSection,
-      route?.params?.requestKey,
-      sendChat,
-    ])
-  );
+    if (sending) {
+      return undefined;
+    }
+
+    console.log('[LeonaChatScreen] event-analysis:queued', {
+      requestKey,
+      initialSection: initialSection || null,
+      initialBriefTab: initialBriefTab || null,
+      promptLength: initialPrompt.length,
+    });
+
+    const timer = setTimeout(() => {
+      console.log('[LeonaChatScreen] event-analysis:dispatch', {
+        requestKey,
+      });
+      sendChatWithContext(initialPrompt, {
+        requestKind: 'event-analysis',
+        pendingText: 'LEONA is analyzing this event. Pulling current signals, impact context, and recommended actions...',
+        failureText: 'LEONA could not finish the event analysis in time. Please retry from the event or ask a shorter follow-up question.',
+      });
+      lastHandledRequestRef.current = requestKey;
+      setInputText('');
+      navigation.setParams({
+        requestKey: undefined,
+        initialPrompt: undefined,
+        initialSection,
+        initialBriefTab,
+      });
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [
+    messages,
+    navigation,
+    route?.params?.initialBriefTab,
+    route?.params?.initialPrompt,
+    route?.params?.initialSection,
+    route?.params?.requestKey,
+    sending,
+    sendChatWithContext,
+  ]);
 
   // ===== WORLD BRIEF =====
   const renderWorldBrief = () => (
@@ -483,7 +663,11 @@ const LeonaChatScreen = ({ navigation, route }) => {
       {/* Narrative */}
       <View style={styles.narrativeCard}>
         <Text style={styles.narrativeText}>
-          {worldNarrative}
+          {normalizeBriefText(
+            worldBriefLoading
+              ? `${EVENTS.length} active events globally. ${severityCounts.critical} critical situations currently require immediate attention.`
+              : worldNarrative
+          )}
         </Text>
       </View>
 
@@ -494,22 +678,28 @@ const LeonaChatScreen = ({ navigation, route }) => {
   // ===== MY BRIEF =====
   const renderMyBrief = () => (
     <ScrollView style={styles.briefContent} showsVerticalScrollIndicator={false}>
+      {myDataUnavailable && (
+        <View style={styles.narrativeCard}>
+          <Text style={styles.narrativeSectionTitle}>SIGN IN REQUIRED</Text>
+          <Text style={styles.narrativeText}>{myNarrative}</Text>
+        </View>
+      )}
       {/* AOI Header */}
-      <View style={styles.myBriefHeader}>
+      {!myDataUnavailable && <View style={styles.myBriefHeader}>
         <View style={styles.blueLine} />
         <Text style={styles.myBriefTitle}>YOUR AREAS OF INTEREST</Text>
-      </View>
+      </View>}
 
-      <View style={styles.aoiTagsRow}>
-        {USER_AOIS.map((aoi, idx) => (
+      {!myDataUnavailable && <View style={styles.aoiTagsRow}>
+        {userAois.map((aoi, idx) => (
           <View key={idx} style={styles.aoiTag}>
             <Text style={styles.aoiText}>📍 {aoi}</Text>
           </View>
         ))}
-      </View>
+      </View>}
 
       {/* Quick Stats */}
-      <View style={styles.myBriefStats}>
+      {!myDataUnavailable && <View style={styles.myBriefStats}>
         <View style={styles.myBriefStat}>
           <Text style={[styles.myBriefStatNum, { color: colors.critical }]}>{mySeverityCounts.critical}</Text>
           <Text style={styles.myBriefStatLabel}>Critical</Text>
@@ -521,30 +711,34 @@ const LeonaChatScreen = ({ navigation, route }) => {
         </View>
         <View style={styles.myBriefStatDivider} />
         <View style={styles.myBriefStat}>
-          <Text style={[styles.myBriefStatNum, { color: colors.blue }]}>{USER_AOIS.length}</Text>
+          <Text style={[styles.myBriefStatNum, { color: colors.blue }]}>{userAois.length}</Text>
           <Text style={styles.myBriefStatLabel}>AOIs</Text>
         </View>
-      </View>
+      </View>}
 
       {/* Situation Narrative */}
       <View style={styles.narrativeCard}>
         <Text style={styles.narrativeSectionTitle}>SITUATION SUMMARY</Text>
         <Text style={styles.narrativeText}>
-          {myNarrative}
+          {normalizeBriefText(
+            myBriefLoading
+              ? `Active monitoring across ${userAois.length} Areas of Interest with ${myScopedEvents.length} live events currently matched to your scope.`
+              : myNarrative
+          )}
         </Text>
       </View>
 
       {/* Pinned Events */}
-      {myEvents.filter(e => pinnedEventIds.has(e.id)).length > 0 && (
+      {!myDataUnavailable && myScopedEvents.filter(e => pinnedEventIds.has(e.id)).length > 0 && (
         <View style={styles.briefSection}>
           <View style={styles.pinnedHeader}>
             <Text style={styles.pinnedIcon}>📌</Text>
             <Text style={styles.pinnedTitle}>PINNED</Text>
             <View style={styles.pinnedCountBadge}>
-              <Text style={styles.pinnedCountText}>{myEvents.filter(e => pinnedEventIds.has(e.id)).length}</Text>
+              <Text style={styles.pinnedCountText}>{myScopedEvents.filter(e => pinnedEventIds.has(e.id)).length}</Text>
             </View>
           </View>
-          {myEvents.filter(e => pinnedEventIds.has(e.id)).map((event) => (
+          {myScopedEvents.filter(e => pinnedEventIds.has(e.id)).map((event) => (
             <TouchableOpacity
               key={event.id}
               style={styles.briefEventRow}
@@ -567,7 +761,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
       )}
 
       {/* Your Events */}
-      <View style={styles.briefSection}>
+      {!myDataUnavailable && <View style={styles.briefSection}>
         <Text style={styles.briefSectionTitle}>YOUR EVENTS</Text>
         {myTopEvents.filter((event) => !pinnedEventIds.has(event.id)).map((event) => (
           <TouchableOpacity
@@ -588,32 +782,22 @@ const LeonaChatScreen = ({ navigation, route }) => {
             </TouchableOpacity>
           </TouchableOpacity>
         ))}
-      </View>
+      </View>}
 
       {/* CTA */}
-      <TouchableOpacity
+      {!myDataUnavailable && <TouchableOpacity
         style={styles.askLeonaBtn}
-        onPress={() => setActiveSection('CHAT')}
+        onPress={handleAskBriefPress}
       >
         <Text style={styles.askLeonaBtnText}>Ask LEONA for a detailed brief →</Text>
-      </TouchableOpacity>
+      </TouchableOpacity>}
 
       <View style={{ height: 30 }} />
     </ScrollView>
   );
 
   // ===== CHAT =====
-  const renderMessage = ({ item }) => {
-    const isAgent = item.type === 'agent';
-    return (
-      <View style={[styles.messageBubbleContainer, isAgent ? styles.agentContainer : styles.userContainer]}>
-        {isAgent && <Image source={leonaAvatar} style={styles.chatAvatarImage} />}
-        <View style={[styles.messageBubble, isAgent ? styles.agentBubble : styles.userBubble]}>
-          <MarkdownMessage text={item.text} isAgent={isAgent} />
-        </View>
-      </View>
-    );
-  };
+  const renderMessage = useCallback(({ item }) => <ChatMessageBubble item={item} />, []);
 
   const renderTypingIndicator = () => (
     <View style={[styles.messageBubbleContainer, styles.agentContainer]}>
@@ -639,11 +823,29 @@ const LeonaChatScreen = ({ navigation, route }) => {
       {/* Quick Chips — compact pills above chat, all 6 visible */}
       <View style={styles.chipsSection}>
         {quickChips.map((chip, idx) => (
-          <TouchableOpacity key={idx} style={styles.chip} onPress={() => handleChipPress(chip)}>
+          <TouchableOpacity
+            key={idx}
+            style={[styles.chip, (sending || hasQueuedRequest) && styles.chipDisabled]}
+            onPress={() => handleChipPress(chip)}
+            disabled={hasQueuedRequest}
+          >
             <Text style={styles.chipText}>{chip}</Text>
           </TouchableOpacity>
         ))}
       </View>
+
+      {(sending || hasQueuedRequest) && (
+        <View style={styles.chatBusyBanner}>
+          <Text style={styles.chatBusyBannerTitle}>
+            {hasQueuedRequest ? 'One request queued' : 'LEONA is busy'}
+          </Text>
+          <Text style={styles.chatBusyBannerText}>
+            {hasQueuedRequest
+              ? 'LEONA is finishing the current response and will run one queued follow-up next.'
+              : 'LEONA is processing your request. You can queue one more quick action.'}
+          </Text>
+        </View>
+      )}
 
       <FlatList
         ref={flatListRef}
@@ -671,9 +873,9 @@ const LeonaChatScreen = ({ navigation, route }) => {
           maxLength={1000}
         />
         <TouchableOpacity
-          style={[styles.sendButton, (!inputText.trim() || sending) && styles.sendButtonDisabled]}
+          style={[styles.sendButton, (!inputText.trim() || sending || hasQueuedRequest) && styles.sendButtonDisabled]}
           onPress={handleSend}
-          disabled={!inputText.trim() || sending}
+          disabled={!inputText.trim() || sending || hasQueuedRequest}
         >
           {sending ? <ActivityIndicator size="small" color={colors.white} /> : <Text style={styles.sendButtonText}>→</Text>}
         </TouchableOpacity>
@@ -724,7 +926,7 @@ const LeonaChatScreen = ({ navigation, route }) => {
           {/* LEONA info */}
           <View style={styles.videoCallerInfo}>
             <Text style={styles.videoCallerName}>LEONA</Text>
-            <Text style={styles.videoCallerStatus}>Secure video · End-to-end encrypted</Text>
+            <Text style={styles.videoCallerStatus}>Video preview · Session opens in Tavus</Text>
           </View>
 
           {/* Self-view (picture-in-picture) */}
@@ -1154,9 +1356,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 7,
     backgroundColor: colors.panel, borderColor: colors.purpleLight, borderWidth: 1, borderRadius: 20,
   },
+  chipDisabled: { opacity: 0.45 },
   chipText: { color: colors.purpleLight, fontSize: 12, fontWeight: '600' },
 
   // Input bar — attach + text + send
+  chatBusyBanner: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(107,72,255,0.22)',
+    backgroundColor: 'rgba(107,72,255,0.12)',
+    gap: 2,
+  },
+  chatBusyBannerTitle: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  chatBusyBannerText: { color: colors.textSec, fontSize: 11, lineHeight: 16 },
   inputContainer: {
     flexDirection: 'row', paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
     borderTopColor: colors.border, borderTopWidth: 1, gap: spacing.sm, alignItems: 'flex-end',

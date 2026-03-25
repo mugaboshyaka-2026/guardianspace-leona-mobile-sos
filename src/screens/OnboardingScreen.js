@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -19,8 +19,9 @@ import { colors, spacing } from '../theme';
 import { AppContext } from '../../App';
 import { addAOI, fetchMyAOIs, updateUserProfile } from '../lib/api';
 import { resetEventCache } from '../hooks/useEvents';
-import { getLocationCoordinates, getLocationMetadata } from '../lib/locality';
+import { getLocationMetadata } from '../lib/locality';
 import { PRODUCT_CONFIGS } from '../lib/products';
+import { AOI_PRESETS } from '../lib/aoiPresets';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 const leonaBadge = require('../assets/leona-badge.png');
@@ -31,16 +32,6 @@ const PRODUCTS = [
   { id: 'leona_plus', label: PRODUCT_CONFIGS.leona_plus.label, desc: PRODUCT_CONFIGS.leona_plus.description, icon: 'LP', accent: PRODUCT_CONFIGS.leona_plus.accent },
   { id: 'leona_pro', label: PRODUCT_CONFIGS.leona_pro.label, desc: PRODUCT_CONFIGS.leona_pro.description, icon: 'PR', accent: PRODUCT_CONFIGS.leona_pro.accent },
   { id: 'leona_enterprise', label: PRODUCT_CONFIGS.leona_enterprise.label, desc: PRODUCT_CONFIGS.leona_enterprise.description, icon: 'EN', accent: PRODUCT_CONFIGS.leona_enterprise.accent },
-];
-
-const DEFAULT_AOI_SUGGESTIONS = [
-  'Los Angeles, CA',
-  'New York, US',
-  'London, UK',
-  'Johannesburg, South Africa',
-  'Dubai, UAE',
-  'Singapore',
-  'Sydney, Australia',
 ];
 
 const EVENT_TYPE_OPTIONS = [
@@ -73,6 +64,8 @@ export default function OnboardingScreen() {
   const [submittingAuth, setSubmittingAuth] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState('leona_plus');
   const [location, setLocation] = useState('');
+  const [locationLat, setLocationLat] = useState('');
+  const [locationLng, setLocationLng] = useState('');
   const [selectedAois, setSelectedAois] = useState([]);
   const [existingAois, setExistingAois] = useState([]);
   const [loadingExistingAois, setLoadingExistingAois] = useState(false);
@@ -80,6 +73,8 @@ export default function OnboardingScreen() {
   const [selectedEventTypes, setSelectedEventTypes] = useState(['flood', 'wildfire', 'earthquake']);
   const [pulseAnim] = useState(new Animated.Value(1));
   const [submittingSetup, setSubmittingSetup] = useState(false);
+  const [locationError, setLocationError] = useState('');
+  const [eventTypeError, setEventTypeError] = useState('');
 
   useEffect(() => {
     if (step === 5) {
@@ -146,20 +141,47 @@ export default function OnboardingScreen() {
     };
   }, [authLoaded, isSignedIn]);
 
-  useEffect(() => {
-    if (location.trim()) {
-      setSelectedAois((prev) => {
-        if (prev.length > 0) return prev;
-        return [location.trim()];
-      });
-    }
-  }, [location]);
-
   const productLabel = PRODUCTS.find((p) => p.id === selectedProduct)?.label || 'LEONA';
-  const allSuggestedAois = useMemo(() => {
-    const merged = [...selectedAois, ...existingAois, ...DEFAULT_AOI_SUGGESTIONS];
-    return Array.from(new Set(merged.map((item) => item.trim()).filter(Boolean)));
-  }, [existingAois, selectedAois]);
+  const selectedAoiNames = useMemo(
+    () => selectedAois.map((item) => item.name).filter(Boolean),
+    [selectedAois]
+  );
+  const allSuggestedAois = useMemo(() => existingAois, [existingAois]);
+
+  const normalizeAoiInput = useCallback((value) => value.trim(), []);
+  const parseCoordinate = useCallback((value) => {
+    const next = Number(value);
+    return Number.isFinite(next) ? next : null;
+  }, []);
+  const buildDraftAoi = useCallback(() => {
+    const normalized = normalizeAoiInput(location);
+    const lat = parseCoordinate(locationLat);
+    const lng = parseCoordinate(locationLng);
+
+    if (!normalized || lat === null || lng === null) {
+      return null;
+    }
+
+    const metadata = getLocationMetadata(normalized);
+    return {
+      name: normalized,
+      city: metadata.city || normalized,
+      country_code: metadata.country_code || '',
+      lat,
+      lng,
+    };
+  }, [location, locationLat, locationLng, normalizeAoiInput, parseCoordinate]);
+
+  const getLocationValidationMessage = useCallback((value, latValue, lngValue) => {
+    const normalized = normalizeAoiInput(value);
+    if (!normalized) {
+      return 'Enter an AOI name before continuing.';
+    }
+    if (parseCoordinate(latValue) === null || parseCoordinate(lngValue) === null) {
+      return 'Enter latitude and longitude values for this AOI.';
+    }
+    return '';
+  }, [normalizeAoiInput, parseCoordinate]);
 
   const showClerkError = (error, fallbackMessage) => {
     const firstError = error?.errors?.[0];
@@ -457,17 +479,34 @@ export default function OnboardingScreen() {
   };
 
   const toggleAoi = (value) => {
-    const normalized = value.trim();
-    if (!normalized) return;
+    const draftAoi = buildDraftAoi();
+    if (!draftAoi) {
+      setLocationError('Enter an AOI name plus latitude and longitude before adding it.');
+      return false;
+    }
+
+    setLocationError('');
 
     setSelectedAois((prev) => (
-      prev.includes(normalized)
-        ? prev.filter((item) => item !== normalized)
-        : [...prev, normalized]
+      prev.some((item) => item.name === draftAoi.name)
+        ? prev.filter((item) => item.name !== draftAoi.name)
+        : [...prev, draftAoi]
     ));
+    setLocation('');
+    setLocationLat('');
+    setLocationLng('');
+    return true;
   };
 
+  const applyPresetAoi = useCallback((preset) => {
+    setLocation(preset.name);
+    setLocationLat(String(preset.lat));
+    setLocationLng(String(preset.lng));
+    setLocationError('');
+  }, []);
+
   const toggleEventType = (value) => {
+    setEventTypeError('');
     setSelectedEventTypes((prev) => (
       prev.includes(value)
         ? prev.filter((item) => item !== value)
@@ -475,78 +514,98 @@ export default function OnboardingScreen() {
     ));
   };
 
-  const createAoiWithFallback = async (aoiName) => {
-    const coordinates = getLocationCoordinates(aoiName);
-    if (!coordinates) {
-      throw new Error(`AOI "${aoiName}" needs coordinates. Pick one of the suggested locations for now.`);
-    }
-    const metadata = getLocationMetadata(aoiName);
+  const createAoiWithFallback = async (aoi) => {
     const payload = {
-      name: aoiName,
-      city: metadata.city,
-      country_code: metadata.country_code,
-      lat: coordinates.lat,
-      lng: coordinates.lng,
+      name: aoi.name,
+      city: aoi.city,
+      country_code: aoi.country_code,
+      lat: aoi.lat,
+      lng: aoi.lng,
       radius_km: selectedRadius,
       is_primary: false,
     };
 
     console.log('[AOI_SETUP] Attempting AOI create', {
-      aoiName,
+      aoiName: aoi.name,
       payload,
     });
     await addAOI(payload);
     console.log('[AOI_SETUP] AOI create succeeded', {
-      aoiName,
+      aoiName: aoi.name,
       payload,
     });
   };
 
   const handleLocationNext = () => {
-    const normalizedLocation = location.trim();
-    if (normalizedLocation && !selectedAois.includes(normalizedLocation)) {
-      setSelectedAois((prev) => [...prev, normalizedLocation]);
+    const normalizedLocation = normalizeAoiInput(location);
+    const locationMessage = normalizedLocation ? getLocationValidationMessage(normalizedLocation, locationLat, locationLng) : '';
+    const draftAoi = normalizedLocation && !locationMessage ? buildDraftAoi() : null;
+
+    if (normalizedLocation && locationMessage) {
+      setLocationError(locationMessage);
+      Alert.alert('Valid location required', locationMessage);
+      return;
     }
 
-    if ((normalizedLocation ? [...selectedAois, normalizedLocation] : selectedAois).length === 0) {
+    const nextAois = draftAoi
+      ? selectedAois.some((item) => item.name === draftAoi.name)
+        ? selectedAois
+        : [...selectedAois, draftAoi]
+      : selectedAois;
+
+    if (nextAois.length === 0 && existingAois.length === 0) {
+      setLocationError('Add at least one AOI with coordinates before continuing.');
       Alert.alert('AOI required', 'Select at least one area of interest before continuing.');
       return;
     }
 
     if (selectedEventTypes.length === 0) {
+      setEventTypeError('Select at least one event type before continuing.');
       Alert.alert('Event types required', 'Select at least one event type before continuing.');
       return;
     }
 
+    setLocationError('');
+    setEventTypeError('');
+    setSelectedAois(nextAois);
     setStep(5);
   };
 
   const handleComplete = async () => {
-    if (selectedAois.length === 0) {
+    const normalizedAois = Array.from(new Set(
+      [...existingAois, ...selectedAois.map((item) => normalizeAoiInput(item.name))]
+        .filter(Boolean)
+    ));
+
+    if (normalizedAois.length === 0) {
       Alert.alert('AOI required', 'Select at least one area of interest before entering the app.');
       return;
     }
 
-    const normalizedAois = Array.from(new Set(selectedAois.map((item) => item.trim()).filter(Boolean)));
+    if (selectedEventTypes.length === 0) {
+      setEventTypeError('Select at least one event type before entering the app.');
+      Alert.alert('Event types required', 'Select at least one event type before entering the app.');
+      return;
+    }
 
     if (isSignedIn) {
       const existingAoiSet = new Set(existingAois.map((item) => item.toLowerCase()));
-      const aoisToCreate = normalizedAois.filter((item) => !existingAoiSet.has(item.toLowerCase()));
+      const aoisToCreate = selectedAois.filter((item) => !existingAoiSet.has(item.name.toLowerCase()));
 
       setSubmittingSetup(true);
       try {
         if (aoisToCreate.length > 0) {
           console.log('[AOI_SETUP] Starting AOI setup', {
             selectedRadius,
-            aoisToCreate,
+            aoisToCreate: aoisToCreate.map((item) => item.name),
           });
-          for (const aoiName of aoisToCreate) {
-            await createAoiWithFallback(aoiName);
+          for (const aoi of aoisToCreate) {
+            await createAoiWithFallback(aoi);
           }
           resetEventCache();
-          setExistingAois((prev) => Array.from(new Set([...prev, ...aoisToCreate])));
+          setExistingAois((prev) => Array.from(new Set([...prev, ...aoisToCreate.map((item) => item.name)])));
           console.log('[AOI_SETUP] AOI setup completed', {
-            aoisCreated: aoisToCreate,
+            aoisCreated: aoisToCreate.map((item) => item.name),
           });
         }
         await updateUserProfile({
@@ -640,8 +699,17 @@ export default function OnboardingScreen() {
         <StepAoiSetup
           location={location}
           setLocation={setLocation}
+          locationLat={locationLat}
+          setLocationLat={setLocationLat}
+          locationLng={locationLng}
+          setLocationLng={setLocationLng}
+          locationError={locationError}
+          setLocationError={setLocationError}
+          eventTypeError={eventTypeError}
           selectedAois={selectedAois}
           toggleAoi={toggleAoi}
+          applyPresetAoi={applyPresetAoi}
+          presets={AOI_PRESETS}
           suggestions={allSuggestedAois}
           existingAois={existingAois}
           selectedRadius={selectedRadius}
@@ -674,10 +742,11 @@ export default function OnboardingScreen() {
         <StepReady
           location={location}
           radius={selectedRadius}
-          aois={selectedAois}
+          aois={Array.from(new Set([...existingAois, ...selectedAoiNames]))}
           eventTypes={selectedEventTypes}
           product={selectedProduct}
           productLabel={productLabel}
+          eventTypeError={eventTypeError}
           onComplete={handleComplete}
           pulseAnim={pulseAnim}
           submitting={submittingSetup}
@@ -951,8 +1020,17 @@ const StepProductSelect = ({ selectedProduct, setSelectedProduct, onNext }) => (
 const StepAoiSetup = ({
   location,
   setLocation,
+  locationLat,
+  setLocationLat,
+  locationLng,
+  setLocationLng,
+  locationError,
+  setLocationError,
+  eventTypeError,
   selectedAois,
   toggleAoi,
+  applyPresetAoi,
+  presets,
   suggestions,
   existingAois,
   selectedRadius,
@@ -971,30 +1049,68 @@ const StepAoiSetup = ({
     <View style={styles.searchContainer}>
       <TextInput
         style={styles.searchInput}
-        placeholder="Add city, region, or country"
+        placeholder="AOI name"
         placeholderTextColor={colors.textDim}
         value={location}
-        onChangeText={setLocation}
+        onChangeText={(value) => {
+          if (locationError) {
+            setLocationError('');
+          }
+          setLocation(value);
+        }}
       />
     </View>
+
+    <View style={styles.coordinateRow}>
+      <View style={[styles.searchContainer, styles.coordinateField]}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Latitude"
+          placeholderTextColor={colors.textDim}
+          value={locationLat}
+          onChangeText={setLocationLat}
+          keyboardType="numeric"
+        />
+      </View>
+      <View style={[styles.searchContainer, styles.coordinateField]}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Longitude"
+          placeholderTextColor={colors.textDim}
+          value={locationLng}
+          onChangeText={setLocationLng}
+          keyboardType="numeric"
+        />
+      </View>
+    </View>
+
+    {locationError ? <Text style={styles.validationText}>{locationError}</Text> : null}
 
     <TouchableOpacity style={styles.buttonOutline} onPress={() => toggleAoi(location)}>
       <Text style={styles.buttonTextOutline}>ADD AOI</Text>
     </TouchableOpacity>
 
-    <Text style={styles.helperText}>Use one of the suggested locations for now. Custom geocoding is not wired yet on mobile.</Text>
+    <Text style={styles.helperText}>Use a preset to autofill coordinates or enter them manually. Presets are shortcuts only, not validation truth.</Text>
 
     <View style={styles.locationSuggestions}>
-      {suggestions.map((loc) => (
+      {presets.map((preset) => (
         <TouchableOpacity
-          key={loc}
-          style={[styles.locationChip, selectedAois.includes(loc) && styles.locationChipSelected]}
-          onPress={() => toggleAoi(loc)}
+          key={preset.name}
+          style={styles.locationChip}
+          onPress={() => applyPresetAoi(preset)}
         >
-          <Text style={[styles.locationChipText, selectedAois.includes(loc) && styles.locationChipTextSelected]}>{loc}</Text>
+          <Text style={styles.locationChipText}>{preset.name}</Text>
         </TouchableOpacity>
       ))}
     </View>
+
+    {suggestions.length > 0 && (
+      <View style={styles.summaryCard}>
+        <SummaryRow label="Existing backend AOIs" value={loadingExistingAois ? 'Loading...' : `${suggestions.length}`} />
+        <View style={styles.summaryDivider} />
+        <Text style={styles.helperText}>AOIs already saved on the account remain available without any client-side lookup list.</Text>
+      </View>
+    )}
 
     <View style={styles.summaryCard}>
       <SummaryRow label="Selected AOIs" value={selectedAois.length ? `${selectedAois.length}` : 'None'} />
@@ -1005,7 +1121,7 @@ const StepAoiSetup = ({
     <View style={styles.mapPreview}>
       <View style={styles.mapPlaceholder}>
         <Text style={styles.mapText}>
-          {selectedAois.length > 0 ? selectedAois.join(' • ') : 'Select at least one AOI'}
+          {selectedAois.length > 0 ? selectedAois.map((item) => item.name).join(' | ') : 'Add at least one AOI or use an existing backend AOI'}
         </Text>
       </View>
     </View>
@@ -1045,14 +1161,20 @@ const StepAoiSetup = ({
       ))}
     </View>
 
-    <TouchableOpacity style={styles.buttonPrimary} onPress={onNext}>
+    {eventTypeError ? <Text style={styles.validationText}>{eventTypeError}</Text> : null}
+
+    <TouchableOpacity
+      style={[styles.buttonPrimary, selectedEventTypes.length === 0 && styles.buttonPrimaryDisabled]}
+      onPress={onNext}
+    >
       <Text style={styles.buttonTextPrimary}>NEXT -></Text>
     </TouchableOpacity>
   </ScrollView>
 );
 
-const StepReady = ({ location, radius, aois, eventTypes, product, productLabel, onComplete, pulseAnim, submitting }) => {
+const StepReady = ({ location, radius, aois, eventTypes, product, productLabel, eventTypeError, onComplete, pulseAnim, submitting }) => {
   const productData = PRODUCTS.find((p) => p.id === product);
+  const isEventTypeSelectionEmpty = !eventTypes || eventTypes.length === 0;
 
   return (
     <ScrollView contentContainerStyle={styles.stepContainer}>
@@ -1079,7 +1201,13 @@ const StepReady = ({ location, radius, aois, eventTypes, product, productLabel, 
         <SummaryRow label="Event Types" value={`${eventTypes?.length || 0}`} />
       </View>
 
-      <TouchableOpacity style={styles.buttonPrimary} onPress={onComplete} disabled={submitting}>
+      {eventTypeError ? <Text style={styles.validationText}>{eventTypeError}</Text> : null}
+
+      <TouchableOpacity
+        style={[styles.buttonPrimary, (submitting || isEventTypeSelectionEmpty) && styles.buttonPrimaryDisabled]}
+        onPress={onComplete}
+        disabled={submitting || isEventTypeSelectionEmpty}
+      >
         <Text style={styles.buttonTextPrimary}>
           {submitting ? 'SAVING AOIS...' : `ENTER ${productLabel.toUpperCase()} ->`}
         </Text>
@@ -1228,6 +1356,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: spacing.lg,
   },
+  buttonPrimaryDisabled: {
+    opacity: 0.45,
+  },
   buttonTextPrimary: {
     color: colors.bg,
     fontSize: 16,
@@ -1258,6 +1389,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textDim,
     marginBottom: spacing.lg,
+    lineHeight: 18,
+  },
+  validationText: {
+    fontSize: 12,
+    color: colors.critical,
+    marginBottom: spacing.md,
     lineHeight: 18,
   },
   faceIDBtn: {
@@ -1440,6 +1577,15 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     color: colors.text,
     fontSize: 14,
+  },
+  coordinateRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  coordinateField: {
+    flex: 1,
+    marginBottom: 0,
   },
   locationSuggestions: {
     flexDirection: 'row',

@@ -1,16 +1,3 @@
-/**
- * CallScreen — LEONA Guardian Pro
- *
- * Currently a UI placeholder for audio / video calls.
- * When ready to add live calls:
- *   1. npm install react-native-agora
- *   2. Replace YOUR_AGORA_APP_ID below with your App ID from console.agora.io
- *   3. Uncomment the Agora blocks marked  // [AGORA]
- *
- * const AGORA_APP_ID = 'YOUR_AGORA_APP_ID';   // [AGORA]
- * const AGORA_TOKEN  = null;                   // [AGORA] null = testing mode
- */
-
 import React, { useState, useEffect, useRef, useCallback, useContext, useMemo } from 'react';
 import {
   View,
@@ -20,21 +7,19 @@ import {
   SafeAreaView,
   StatusBar,
   Platform,
-  Dimensions,
   Alert,
 } from 'react-native';
-import { colors, spacing } from '../theme';
 import * as WebBrowser from 'expo-web-browser';
+import { colors, spacing } from '../theme';
 import {
   endTavusConversation,
   getTavusConversation,
   startTavusConversation,
+  syncTavusPersona,
 } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { AppContext } from '../../App';
 import { getProductConfig } from '../lib/products';
-
-const { width: SCREEN_W } = Dimensions.get('window');
 
 function findConversationUrl(payload) {
   if (!payload || typeof payload !== 'object') return null;
@@ -105,15 +90,15 @@ function summarizePayload(payload) {
 const CallScreen = ({ navigation, route }) => {
   const {
     channelName = 'leona-default',
-    callType    = 'video',       // 'audio' | 'video'
-    threadName  = 'Team Call',
+    callType = 'video',
+    threadName = 'Team Call',
     participants = [],
   } = route.params || {};
   const { user } = useAuth();
   const { userConfig } = useContext(AppContext);
   const productConfig = getProductConfig(userConfig?.product);
-
   const isVideo = callType === 'video';
+
   const currentUserIdentity = useMemo(() => {
     const clerkFullName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim();
     const configFullName = userConfig?.fullName?.trim?.() || '';
@@ -138,47 +123,33 @@ const CallScreen = ({ navigation, route }) => {
     };
   }, [user, userConfig]);
 
-  // ── Controls ────────────────────────────────────────────────────────────────
-  const [micMuted,  setMicMuted]  = useState(false);
-  const [camOff,    setCamOff]    = useState(!isVideo);
-  const [speakerOn, setSpeakerOn] = useState(true);
   const [connected, setConnected] = useState(false);
   const [isStarting, setIsStarting] = useState(isVideo);
   const [sessionError, setSessionError] = useState('');
   const [conversationUrl, setConversationUrl] = useState('');
   const [conversationId, setConversationId] = useState('');
-
-  // ── Timer ───────────────────────────────────────────────────────────────────
   const [duration, setDuration] = useState(0);
+
   const timerRef = useRef(null);
   const hasStartedRef = useRef(false);
 
-  const formatDuration = (s) =>
-    `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
+  const formatDuration = (seconds) =>
+    `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 
-  const statusText = !connected
-    ? 'Connecting…'
-    : formatDuration(duration);
-
-  // ── Actions ─────────────────────────────────────────────────────────────────
-  const toggleMic     = useCallback(() => setMicMuted((v) => !v),  []);
-  const toggleCamera  = useCallback(() => setCamOff((v) => !v),    []);
-  const toggleSpeaker = useCallback(() => setSpeakerOn((v) => !v), []);
+  const statusText = !connected ? 'Connecting...' : formatDuration(duration);
 
   const markConnected = useCallback(() => {
     setConnected(true);
     clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => setDuration((d) => d + 1), 1000);
+    timerRef.current = setInterval(() => setDuration((value) => value + 1), 1000);
   }, []);
 
   const openConversation = useCallback(async (url) => {
     if (!url) return;
     try {
-      console.log('[Tavus] Opening browser session', { url });
       await WebBrowser.openBrowserAsync(url, {
         presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
       });
-      console.log('[Tavus] Browser session closed by user/app');
     } catch (err) {
       console.warn('[Tavus] Browser open failed:', err.message);
     }
@@ -188,11 +159,6 @@ const CallScreen = ({ navigation, route }) => {
     console.log('[Tavus] Hydrating conversation payload', summarizePayload(payload));
     const nextUrl = findConversationUrl(payload);
     const nextId = findConversationId(payload);
-    console.log('[Tavus] Extracted session details', {
-      conversationUrl: nextUrl || null,
-      conversationId: nextId || null,
-      autoOpen,
-    });
 
     if (nextUrl) setConversationUrl(nextUrl);
     if (nextId) setConversationId(nextId);
@@ -214,24 +180,19 @@ const CallScreen = ({ navigation, route }) => {
     hasStartedRef.current = true;
     setIsStarting(true);
     setSessionError('');
-    console.log('[Tavus] Bootstrapping conversation', {
-      channelName,
-      threadName,
-      callType,
-      participantsCount: participants.length,
-      currentUserIdentity,
-    });
 
     try {
+      await syncTavusPersona().catch((err) => {
+        console.warn('[Tavus] Persona sync failed:', err.message);
+      });
+
       const active = await getTavusConversation().catch((err) => {
         console.warn('[Tavus] Get active conversation failed:', err.message);
         return null;
       });
-      const resumed = await hydrateConversation(active, { autoOpen: false });
-      console.log('[Tavus] Existing conversation resume result', { resumed });
 
+      const resumed = await hydrateConversation(active, { autoOpen: true });
       if (!resumed) {
-        console.log('[Tavus] Starting new conversation request');
         const created = await startTavusConversation({
           channel_name: channelName,
           thread_name: threadName,
@@ -246,9 +207,8 @@ const CallScreen = ({ navigation, route }) => {
           user_name: currentUserIdentity.name,
           user_email: currentUserIdentity.email,
         });
-        console.log('[Tavus] Start conversation response', summarizePayload(created));
+
         const started = await hydrateConversation(created, { autoOpen: true });
-        console.log('[Tavus] New conversation start result', { started });
         if (!started) {
           throw new Error('Conversation started but no usable session details were returned.');
         }
@@ -257,7 +217,6 @@ const CallScreen = ({ navigation, route }) => {
       console.warn('[Tavus] Bootstrap failed:', err.message);
       setSessionError(err.message || 'Unable to start Tavus conversation.');
     } finally {
-      console.log('[Tavus] Bootstrap finished');
       setIsStarting(false);
     }
   }, [callType, channelName, currentUserIdentity, hydrateConversation, isVideo, participants, threadName]);
@@ -282,59 +241,44 @@ const CallScreen = ({ navigation, route }) => {
 
   const endCall = useCallback(() => {
     clearInterval(timerRef.current);
-    console.log('[Tavus] Ending call screen', {
-      isVideo,
-      conversationId: conversationId || null,
-      conversationUrl: conversationUrl || null,
-    });
     if (isVideo) {
       endTavusConversation().catch((err) => {
         console.warn('[Tavus] End conversation failed:', err.message);
       });
     }
     navigation.goBack();
-  }, [conversationId, conversationUrl, isVideo, navigation]);
+  }, [isVideo, navigation]);
 
-  const participantLabel =
-    participants.length > 0 ? participants.join(', ') : threadName;
+  const participantLabel = participants.length > 0 ? participants.join(', ') : threadName;
+  const callStatusLabel = sessionError
+    ? 'Session error'
+    : isStarting
+      ? 'Starting LEONA video session...'
+      : conversationUrl
+        ? 'Live video ready'
+        : statusText;
+  const connectionBadgeLabel = isVideo ? 'SESSION READY' : 'CALL UI PREVIEW';
 
-  // ─────────────────────────────────────────────────────────────────────────────
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor="#000" />
 
-      {/* ── BACKGROUND (video placeholder or audio bg) ── */}
       {isVideo ? (
         <View style={styles.videoBg}>
-          {/* Remote feed placeholder */}
           <View style={styles.remoteVideoPlaceholder}>
             <Text style={styles.remoteAvatarGlyph}>
               {participantLabel.slice(0, 2).toUpperCase()}
             </Text>
-            {!connected && (
-              <Text style={styles.connectingText}>Connecting…</Text>
-            )}
+            {!connected && <Text style={styles.connectingText}>Connecting...</Text>}
           </View>
-
-          {/* Local preview pip */}
-          {!camOff ? (
-            <View style={styles.localPip}>
-              <View style={styles.localPipInner}>
-                <Text style={styles.localPipText}>KM</Text>
-              </View>
-              <TouchableOpacity style={styles.flipBtn}>
-                <Text style={styles.flipBtnText}>↺</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={[styles.localPip, styles.localPipOff]}>
-              <Text style={{ fontSize: 20 }}>🎥</Text>
-              <Text style={styles.camOffLabel}>Off</Text>
-            </View>
-          )}
+          <View style={styles.localPip}>
+            <Text style={styles.localPipTitle}>Tavus Session</Text>
+            <Text style={styles.localPipCaption}>
+              Mic and camera permissions happen after you join LEONA.
+            </Text>
+          </View>
         </View>
       ) : (
-        /* ── AUDIO BG ── */
         <View style={styles.audioBg}>
           <View style={styles.audioRingOuter}>
             <View style={[styles.audioRingInner, connected && styles.audioRingConnected]}>
@@ -348,37 +292,27 @@ const CallScreen = ({ navigation, route }) => {
         </View>
       )}
 
-      {/* ── OVERLAY ── */}
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
-
-        {/* Top bar */}
         <View style={styles.topBar}>
           <TouchableOpacity style={styles.topCloseBtn} onPress={endCall}>
-            <Text style={styles.topCloseBtnText}>✕</Text>
+            <Text style={styles.topCloseBtnText}>X</Text>
           </TouchableOpacity>
           <View style={styles.topBadge}>
             <Text style={styles.topBadgeText}>
-              {isVideo ? '📹 VIDEO CALL' : '🎙 AUDIO CALL'}
+              {isVideo ? 'VIDEO CALL' : 'AUDIO CALL'}
             </Text>
           </View>
-          <View style={{ width: 40 }} />
+          <View style={styles.topSpacer} />
         </View>
 
-        {/* Centre info */}
         <View style={styles.callInfo}>
           <Text style={styles.callTitle}>{threadName}</Text>
-          <Text style={styles.callStatus}>
-            {sessionError ? 'Session error' : isStarting ? 'Starting Tavus session...' : statusText}
-          </Text>
-          {!!conversationId && (
-            <Text style={styles.sessionMeta}>Session {conversationId}</Text>
-          )}
-          {!!sessionError && (
-            <Text style={styles.sessionErrorText}>{sessionError}</Text>
-          )}
+          <Text style={styles.callStatus}>{callStatusLabel}</Text>
+          {!!conversationId && <Text style={styles.sessionMeta}>Session {conversationId}</Text>}
+          {!!sessionError && <Text style={styles.sessionErrorText}>{sessionError}</Text>}
           {isVideo && !!conversationUrl && (
             <TouchableOpacity style={styles.sessionActionBtn} onPress={() => openConversation(conversationUrl)}>
-              <Text style={styles.sessionActionText}>Open Tavus Video</Text>
+              <Text style={styles.sessionActionText}>Join LEONA Video</Text>
             </TouchableOpacity>
           )}
           {isVideo && !conversationUrl && !!sessionError && (
@@ -392,76 +326,44 @@ const CallScreen = ({ navigation, route }) => {
               <Text style={styles.sessionActionText}>Retry Session</Text>
             </TouchableOpacity>
           )}
+          {isVideo && (
+            <View style={styles.micInfoCard}>
+              <Text style={styles.micInfoTitle}>Video session handoff</Text>
+              <Text style={styles.micInfoBody}>
+                This screen launches the external Tavus session. Security and media handling depend on that live session, not this placeholder UI.
+              </Text>
+            </View>
+          )}
           {connected && (
             <View style={styles.connectedBadge}>
               <View style={styles.connectedDot} />
-              <Text style={styles.connectedText}>ENCRYPTED</Text>
+              <Text style={styles.connectedText}>{connectionBadgeLabel}</Text>
             </View>
           )}
         </View>
 
-        {/* Controls */}
         <View style={styles.controlsOuter}>
-          <View style={styles.controls}>
-
-            {/* Speaker */}
-            <TouchableOpacity
-              style={[styles.ctrlBtn, speakerOn && styles.ctrlBtnOn]}
-              onPress={toggleSpeaker}
-            >
-              <Text style={styles.ctrlIcon}>{speakerOn ? '🔊' : '🔇'}</Text>
-              <Text style={styles.ctrlLabel}>{speakerOn ? 'Speaker' : 'Earpiece'}</Text>
-            </TouchableOpacity>
-
-            {/* Mic */}
-            <TouchableOpacity
-              style={[styles.ctrlBtn, micMuted && styles.ctrlBtnDanger]}
-              onPress={toggleMic}
-            >
-              <Text style={styles.ctrlIcon}>{micMuted ? '🚫' : '🎙'}</Text>
-              <Text style={styles.ctrlLabel}>{micMuted ? 'Unmute' : 'Mute'}</Text>
-            </TouchableOpacity>
-
-            {/* End Call */}
-            <TouchableOpacity style={styles.endBtn} onPress={endCall}>
-              <Text style={styles.endBtnIcon}>📵</Text>
-            </TouchableOpacity>
-
-            {/* Camera (video only) */}
-            {isVideo ? (
-              <TouchableOpacity
-                style={[styles.ctrlBtn, camOff && styles.ctrlBtnDanger]}
-                onPress={toggleCamera}
-              >
-                <Text style={styles.ctrlIcon}>{camOff ? '📷' : '🎥'}</Text>
-                <Text style={styles.ctrlLabel}>{camOff ? 'Start Cam' : 'Stop Cam'}</Text>
+          <View style={styles.controlsSimple}>
+            {isVideo && !!conversationUrl && (
+              <TouchableOpacity style={styles.primaryActionBtn} onPress={() => openConversation(conversationUrl)}>
+                <Text style={styles.primaryActionText}>Open Session</Text>
               </TouchableOpacity>
-            ) : (
-              <View style={styles.ctrlSpacer} />
             )}
-
-            {/* Participants */}
-            <TouchableOpacity style={styles.ctrlBtn}>
-              <Text style={styles.ctrlIcon}>👥</Text>
-              <Text style={styles.ctrlLabel}>Team</Text>
+            <TouchableOpacity style={styles.endBtn} onPress={endCall}>
+              <Text style={styles.endBtnIcon}>End</Text>
             </TouchableOpacity>
-
           </View>
         </View>
-
       </SafeAreaView>
     </View>
   );
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#000',
   },
-
-  // ── Video bg ────────────────────────────────────────────────────────────────
   videoBg: {
     flex: 1,
     backgroundColor: '#0A0D1A',
@@ -488,53 +390,28 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 16,
     bottom: 190,
-    width: 100,
-    height: 142,
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.18)',
-    backgroundColor: '#1A1A2E',
+    width: 180,
+    minHeight: 104,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(7,10,22,0.92)',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
     justifyContent: 'center',
-    alignItems: 'center',
   },
-  localPipInner: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: colors.purple,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  localPipText: {
+  localPipTitle: {
     color: '#fff',
-    fontSize: 20,
+    fontSize: 13,
     fontWeight: '700',
+    marginBottom: 6,
+    letterSpacing: 0.4,
   },
-  localPipOff: {
-    gap: 6,
+  localPipCaption: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+    lineHeight: 18,
   },
-  camOffLabel: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 10,
-  },
-  flipBtn: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  flipBtnText: {
-    color: '#fff',
-    fontSize: 15,
-  },
-
-  // ── Audio bg ─────────────────────────────────────────────────────────────────
   audioBg: {
     flex: 1,
     backgroundColor: '#06091C',
@@ -582,15 +459,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 3,
   },
-
-  // ── Overlay ───────────────────────────────────────────────────────────────
   overlay: {
     position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'space-between',
   },
-
-  // ── Top bar ───────────────────────────────────────────────────────────────
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -606,7 +482,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  topCloseBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  topCloseBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
   topBadge: {
     backgroundColor: 'rgba(0,0,0,0.4)',
     borderRadius: 20,
@@ -619,8 +499,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.8,
   },
-
-  // ── Call info ──────────────────────────────────────────────────────────────
+  topSpacer: {
+    width: 40,
+  },
   callInfo: {
     alignItems: 'center',
     paddingHorizontal: spacing.xl,
@@ -653,9 +534,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   sessionActionBtn: {
-    marginBottom: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    marginBottom: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: 'rgba(0,168,255,0.35)',
@@ -666,6 +547,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.3,
+  },
+  micInfoCard: {
+    width: '100%',
+    maxWidth: 340,
+    marginBottom: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  micInfoTitle: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 4,
+    letterSpacing: 0.3,
+  },
+  micInfoBody: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
   },
   connectedBadge: {
     flexDirection: 'row',
@@ -690,61 +595,55 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1.2,
   },
-
-  // ── Controls ───────────────────────────────────────────────────────────────
   controlsOuter: {
     paddingHorizontal: spacing.lg,
     paddingBottom: Platform.OS === 'ios' ? 14 : 24,
   },
-  controls: {
+  controlsSimple: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(8,10,24,0.9)',
-    borderRadius: 30,
+    gap: 12,
+    backgroundColor: 'rgba(8,10,24,0.92)',
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
-    paddingVertical: 16,
-    paddingHorizontal: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
   },
-  ctrlBtn: {
+  primaryActionBtn: {
+    minHeight: 52,
+    paddingHorizontal: 22,
+    borderRadius: 18,
+    backgroundColor: colors.blueLight,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 5,
-    width: 54,
-    paddingVertical: 6,
-    borderRadius: 12,
   },
-  ctrlBtnOn: {
-    backgroundColor: 'rgba(0,122,255,0.18)',
+  primaryActionText: {
+    color: '#03111D',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
-  ctrlBtnDanger: {
-    backgroundColor: 'rgba(255,59,48,0.18)',
-  },
-  ctrlSpacer: { width: 54 },
-  ctrlIcon: { fontSize: 26 },
-  ctrlLabel: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 9,
-    fontWeight: '600',
-    letterSpacing: 0.3,
-    textAlign: 'center',
-  },
-
-  // End call
   endBtn: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    minWidth: 88,
+    height: 52,
+    borderRadius: 18,
     backgroundColor: '#FF3B30',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 18,
     shadowColor: '#FF3B30',
-    shadowOpacity: 0.55,
+    shadowOpacity: 0.35,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 4 },
     elevation: 10,
   },
-  endBtnIcon: { fontSize: 30 },
+  endBtnIcon: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
 });
 
 export default CallScreen;

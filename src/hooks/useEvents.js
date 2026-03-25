@@ -3,7 +3,7 @@
  * Centralizes API calls + caching so Map, Alerts, Briefs screens
  * all share the same data without redundant fetches.
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   fetchMyEvents,
   fetchWorldEvents,
@@ -17,6 +17,8 @@ import {
   getRelatedNews,
 } from '../lib/api';
 import { onEventUpdate, subscribeToAOI } from '../lib/realtime';
+import { getCurrentDataPreferences, subscribeToDataPreferences } from '../lib/dataPreferences';
+import { getOfflineDataset, setOfflineDataset } from '../lib/offlineCache';
 
 // Simple in-memory cache
 const cache = {
@@ -31,7 +33,166 @@ const cache = {
 };
 
 const STALE_MS = 60_000; // 1 min
+const DATA_SAVER_STALE_MS = 300_000; // 5 min
+const REALTIME_REFRESH_DEBOUNCE_MS = 1500;
 const subscribedAoiIds = new Set();
+const offlineCacheHydrationPromises = {};
+const initialLeonaMessages = [
+  {
+    id: 'msg0',
+    type: 'agent',
+    text: "I'm monitoring active events globally. How can I help you today?",
+  },
+];
+const leonaChatStore = {
+  messages: initialLeonaMessages,
+  sending: false,
+  listeners: new Set(),
+  queuedRequest: null,
+};
+
+function emitLeonaChat() {
+  leonaChatStore.listeners.forEach((listener) =>
+    listener({
+      messages: leonaChatStore.messages,
+      sending: leonaChatStore.sending,
+      hasQueuedRequest: !!leonaChatStore.queuedRequest,
+    })
+  );
+}
+
+function updateLeonaChat(partial) {
+  Object.assign(leonaChatStore, partial);
+  emitLeonaChat();
+}
+
+function buildDataStatus(source, overrides = {}) {
+  const preferences = getCurrentDataPreferences();
+  return {
+    source,
+    message: null,
+    offlineCacheEnabled: Boolean(preferences.offline_cache),
+    dataSaverMode: Boolean(preferences.data_saver_mode),
+    lastUpdated: overrides.lastUpdated ?? null,
+    ...overrides,
+  };
+}
+
+async function executeLeonaChatSend(userText, options = {}) {
+  const pendingId = options.pendingMessageId || `pending-${Date.now()}`;
+  const startedAt = Date.now();
+  console.log('[useLeonaChat] send:start', {
+    requestKind: options.requestKind || 'generic',
+    hasPendingText: !!options.pendingText,
+    promptLength: userText.length,
+  });
+
+  const nextMessages = options.skipLocalEcho
+    ? leonaChatStore.messages
+    : [...leonaChatStore.messages, { id: Date.now().toString(), type: 'user', text: userText }];
+  if (options.pendingText && !options.skipLocalEcho) {
+    nextMessages.push({
+      id: pendingId,
+      type: 'agent',
+      text: options.pendingText,
+      pending: true,
+    });
+  }
+  updateLeonaChat({ messages: nextMessages, sending: true });
+
+  try {
+    const apiMessages = nextMessages
+      .filter((m) => !m.pending)
+      .map((m) => ({
+        role: m.type === 'agent' ? 'assistant' : 'user',
+        content: m.text,
+      }));
+    const contextMessage = buildLeonaContextMessage(options.context);
+    const requestMessages = contextMessage
+      ? apiMessages.map((message, index) => {
+          if (index !== apiMessages.length - 1 || message.role !== 'user') {
+            return message;
+          }
+          return {
+            ...message,
+            content: `${contextMessage}\n\nUser request: ${message.content}`,
+          };
+        })
+      : apiMessages;
+
+    const data = await sendLeonaMessage(requestMessages);
+    const reply = data.message || data.reply || data.content || 'Processing your request...';
+    console.log('[useLeonaChat] send:success', {
+      requestKind: options.requestKind || 'generic',
+      elapsedMs: Date.now() - startedAt,
+      replyLength: reply.length,
+    });
+    const agentMsg = { id: (Date.now() + 1).toString(), type: 'agent', text: reply };
+    updateLeonaChat({
+      messages: [...leonaChatStore.messages.filter((msg) => msg.id !== pendingId), agentMsg],
+    });
+  } catch (err) {
+    console.warn('[useLeonaChat] send:failed', {
+      requestKind: options.requestKind || 'generic',
+      elapsedMs: Date.now() - startedAt,
+      error: err.message,
+    });
+    const agentMsg = {
+      id: (Date.now() + 1).toString(),
+      type: 'agent',
+      text: options.failureText || 'I\'m having trouble connecting to the server. Please try again shortly.',
+    };
+    updateLeonaChat({
+      messages: [...leonaChatStore.messages.filter((msg) => msg.id !== pendingId), agentMsg],
+    });
+  } finally {
+    console.log('[useLeonaChat] send:complete', {
+      requestKind: options.requestKind || 'generic',
+      elapsedMs: Date.now() - startedAt,
+    });
+    updateLeonaChat({ sending: false });
+    if (leonaChatStore.queuedRequest) {
+      const nextRequest = leonaChatStore.queuedRequest;
+      leonaChatStore.queuedRequest = null;
+      if (nextRequest.queuedPendingId || nextRequest.queuedUserMsgId) {
+        updateLeonaChat({
+          messages: leonaChatStore.messages.filter((message) => (
+            message.id !== nextRequest.queuedPendingId && message.id !== nextRequest.queuedUserMsgId
+          )),
+        });
+      }
+      executeLeonaChatSend(nextRequest.userText, nextRequest.options);
+    }
+  }
+}
+
+function buildLeonaContextMessage(context) {
+  if (!context) {
+    return null;
+  }
+
+  const serialized = JSON.stringify(context);
+  if (!serialized || serialized === '{}') {
+    return null;
+  }
+
+  return `Current user context: ${serialized}`;
+}
+
+function getStaleMs() {
+  return getCurrentDataPreferences().data_saver_mode ? DATA_SAVER_STALE_MS : STALE_MS;
+}
+
+function hasCachedEvents(cacheKey) {
+  return Array.isArray(cache[cacheKey]) && cache[cacheKey].length > 0;
+}
+
+function getCachedStatus(cacheKey, message) {
+  return buildDataStatus('cache', {
+    message,
+    lastUpdated: cache.lastFetch[cacheKey] || null,
+  });
+}
 
 export function resetEventCache() {
   cache.myEvents = null;
@@ -43,11 +204,49 @@ export function resetEventCache() {
   cache.favorites = null;
   cache.lastFetch = {};
   subscribedAoiIds.clear();
+  if (myEventsStore.refreshTimeout) {
+    clearTimeout(myEventsStore.refreshTimeout);
+    myEventsStore.refreshTimeout = null;
+  }
+  if (worldEventsStore.refreshTimeout) {
+    clearTimeout(worldEventsStore.refreshTimeout);
+    worldEventsStore.refreshTimeout = null;
+  }
+  myEventsStore.refreshInFlight = false;
+  myEventsStore.pendingRefresh = false;
+  myEventsStore.state = { events: [], loading: false, error: null, status: buildDataStatus('live') };
+  worldEventsStore.refreshInFlight = false;
+  worldEventsStore.pendingRefresh = false;
+  worldEventsStore.state = { events: [], loading: false, error: null, status: buildDataStatus('live') };
+  emitSharedEventStore(myEventsStore);
+  emitSharedEventStore(worldEventsStore);
+  leonaChatStore.messages = initialLeonaMessages;
+  leonaChatStore.sending = false;
+  emitLeonaChat();
 }
 
 function isStale(key) {
   const t = cache.lastFetch[key];
-  return !t || Date.now() - t > STALE_MS;
+  return !t || Date.now() - t > getStaleMs();
+}
+
+export function getRefreshIntervalMs(value) {
+  switch (value) {
+    case '30s':
+      return 30_000;
+    case '1m':
+      return 60_000;
+    case '5m':
+      return 300_000;
+    case '15m':
+      return 900_000;
+    default:
+      return 60_000;
+  }
+}
+
+export function isAccessDeniedError(error) {
+  return error?.status === 401 || error?.status === 403;
 }
 
 function mergeEventToFront(existing = [], incoming) {
@@ -71,128 +270,486 @@ function mergeEventToFront(existing = [], incoming) {
   return next;
 }
 
+function createSharedEventStore(cacheKey) {
+  return {
+    state: {
+      events: cache[cacheKey] || [],
+      loading: false,
+      error: null,
+      status: buildDataStatus(cache[cacheKey]?.length ? 'cache' : 'live', {
+        lastUpdated: cache.lastFetch[cacheKey] || null,
+      }),
+    },
+    listeners: new Set(),
+    refreshTimeout: null,
+    refreshInFlight: false,
+    pendingRefresh: false,
+    realtimeUnsub: null,
+    subscriberCount: 0,
+  };
+}
+
+const myEventsStore = createSharedEventStore('myEvents');
+const worldEventsStore = createSharedEventStore('worldEvents');
+
+function emitSharedEventStore(store) {
+  store.listeners.forEach((listener) => listener(store.state));
+}
+
+function updateSharedEventStore(store, patch) {
+  store.state = {
+    ...store.state,
+    ...patch,
+  };
+  emitSharedEventStore(store);
+}
+
+function subscribeSharedEventStore(store, listener) {
+  store.listeners.add(listener);
+  listener(store.state);
+  return () => {
+    store.listeners.delete(listener);
+  };
+}
+
+async function hydrateOfflineCache(cacheKey, store) {
+  if (hasCachedEvents(cacheKey)) {
+    return cache[cacheKey];
+  }
+
+  if (!getCurrentDataPreferences().offline_cache) {
+    return null;
+  }
+
+  if (!offlineCacheHydrationPromises[cacheKey]) {
+    offlineCacheHydrationPromises[cacheKey] = getOfflineDataset(cacheKey)
+      .then((entry) => {
+        if (!entry || !Array.isArray(entry.data) || entry.data.length === 0) {
+          return null;
+        }
+
+        cache[cacheKey] = entry.data;
+        cache.lastFetch[cacheKey] = entry.updatedAt || Date.now();
+        updateSharedEventStore(store, {
+          events: entry.data,
+          loading: false,
+          error: null,
+          status: getCachedStatus(cacheKey, 'Showing saved events from offline cache.'),
+        });
+        return entry.data;
+      })
+      .finally(() => {
+        offlineCacheHydrationPromises[cacheKey] = null;
+      });
+  }
+
+  return offlineCacheHydrationPromises[cacheKey];
+}
+
+async function refreshMyEventsStore(options = {}) {
+  if (myEventsStore.refreshInFlight) {
+    myEventsStore.pendingRefresh = true;
+    return;
+  }
+
+  myEventsStore.refreshInFlight = true;
+  updateSharedEventStore(myEventsStore, { loading: true, error: null });
+
+  const preferences = getCurrentDataPreferences();
+  await hydrateOfflineCache('myEvents', myEventsStore);
+  if (!options.manual && preferences.offline_cache && preferences.data_saver_mode && hasCachedEvents('myEvents')) {
+    updateSharedEventStore(myEventsStore, {
+      events: cache.myEvents,
+      loading: false,
+      error: null,
+      status: getCachedStatus('myEvents', 'Data Saver is on. Using cached events until you refresh.'),
+    });
+    myEventsStore.refreshInFlight = false;
+    myEventsStore.pendingRefresh = false;
+    return;
+  }
+
+  try {
+    const data = await fetchMyEvents('all');
+    cache.myEvents = data;
+    cache.lastFetch.myEvents = Date.now();
+    if (preferences.offline_cache) {
+      setOfflineDataset('myEvents', data).catch((err) => {
+        console.warn('[useMyEvents] Offline cache write failed:', err.message);
+      });
+    }
+    updateSharedEventStore(myEventsStore, {
+      events: data,
+      loading: false,
+      error: null,
+      status: buildDataStatus('live', { lastUpdated: cache.lastFetch.myEvents }),
+    });
+  } catch (err) {
+    console.warn('[useMyEvents] API failed:', err.message);
+    if (preferences.offline_cache && hasCachedEvents('myEvents')) {
+      updateSharedEventStore(myEventsStore, {
+        events: cache.myEvents,
+        loading: false,
+        error: null,
+        status: getCachedStatus('myEvents', 'Offline cache in use. Live updates will resume when you reconnect.'),
+      });
+    } else {
+      updateSharedEventStore(myEventsStore, {
+        events: [],
+        loading: false,
+        error: err,
+        status: buildDataStatus('error'),
+      });
+    }
+  } finally {
+    myEventsStore.refreshInFlight = false;
+    if (myEventsStore.pendingRefresh) {
+      myEventsStore.pendingRefresh = false;
+      myEventsStore.refreshTimeout = setTimeout(() => {
+        myEventsStore.refreshTimeout = null;
+        refreshMyEventsStore();
+      }, 0);
+    }
+  }
+}
+
+function scheduleMyEventsRefresh() {
+  if (getCurrentDataPreferences().data_saver_mode) {
+    return;
+  }
+
+  myEventsStore.pendingRefresh = true;
+  if (myEventsStore.refreshTimeout) {
+    return;
+  }
+
+  myEventsStore.refreshTimeout = setTimeout(() => {
+    myEventsStore.refreshTimeout = null;
+    myEventsStore.pendingRefresh = false;
+    refreshMyEventsStore();
+  }, REALTIME_REFRESH_DEBOUNCE_MS);
+}
+
+function ensureMyEventsRealtimeSubscription() {
+  if (myEventsStore.realtimeUnsub) {
+    return;
+  }
+
+  myEventsStore.realtimeUnsub = onEventUpdate((msg) => {
+    if (!msg?.event) {
+      return;
+    }
+
+    if (msg.type === 'aoi_alert' || msg.type === 'new' || msg.type === 'update') {
+      const next = mergeEventToFront(cache.myEvents || myEventsStore.state.events, msg.event);
+      cache.myEvents = next;
+      cache.lastFetch.myEvents = Date.now();
+      updateSharedEventStore(myEventsStore, {
+        events: next,
+        status: buildDataStatus('live', { lastUpdated: cache.lastFetch.myEvents }),
+      });
+      scheduleMyEventsRefresh();
+    }
+  });
+}
+
+function cleanupMyEventsRealtimeSubscription() {
+  if (myEventsStore.subscriberCount > 0) {
+    return;
+  }
+
+  if (myEventsStore.refreshTimeout) {
+    clearTimeout(myEventsStore.refreshTimeout);
+    myEventsStore.refreshTimeout = null;
+  }
+
+  if (myEventsStore.realtimeUnsub) {
+    myEventsStore.realtimeUnsub();
+    myEventsStore.realtimeUnsub = null;
+  }
+}
+
+async function refreshWorldEventsStore(options = {}) {
+  if (worldEventsStore.refreshInFlight) {
+    worldEventsStore.pendingRefresh = true;
+    return;
+  }
+
+  worldEventsStore.refreshInFlight = true;
+  updateSharedEventStore(worldEventsStore, { loading: true, error: null });
+
+  const preferences = getCurrentDataPreferences();
+  await hydrateOfflineCache('worldEvents', worldEventsStore);
+  if (!options.manual && preferences.offline_cache && preferences.data_saver_mode && hasCachedEvents('worldEvents')) {
+    updateSharedEventStore(worldEventsStore, {
+      events: cache.worldEvents,
+      loading: false,
+      error: null,
+      status: getCachedStatus('worldEvents', 'Data Saver is on. Using cached events until you refresh.'),
+    });
+    worldEventsStore.refreshInFlight = false;
+    worldEventsStore.pendingRefresh = false;
+    return;
+  }
+
+  try {
+    const data = await fetchWorldEvents();
+    cache.worldEvents = data;
+    cache.lastFetch.worldEvents = Date.now();
+    if (preferences.offline_cache) {
+      setOfflineDataset('worldEvents', data).catch((err) => {
+        console.warn('[useWorldEvents] Offline cache write failed:', err.message);
+      });
+    }
+    updateSharedEventStore(worldEventsStore, {
+      events: data,
+      loading: false,
+      error: null,
+      status: buildDataStatus('live', { lastUpdated: cache.lastFetch.worldEvents }),
+    });
+  } catch (err) {
+    console.warn('[useWorldEvents] API failed:', err.message);
+    if (preferences.offline_cache && hasCachedEvents('worldEvents')) {
+      updateSharedEventStore(worldEventsStore, {
+        events: cache.worldEvents,
+        loading: false,
+        error: null,
+        status: getCachedStatus('worldEvents', 'Offline cache in use. Live updates will resume when you reconnect.'),
+      });
+    } else {
+      updateSharedEventStore(worldEventsStore, {
+        events: [],
+        loading: false,
+        error: err,
+        status: buildDataStatus('error'),
+      });
+    }
+  } finally {
+    worldEventsStore.refreshInFlight = false;
+    if (worldEventsStore.pendingRefresh) {
+      worldEventsStore.pendingRefresh = false;
+      worldEventsStore.refreshTimeout = setTimeout(() => {
+        worldEventsStore.refreshTimeout = null;
+        refreshWorldEventsStore();
+      }, 0);
+    }
+  }
+}
+
+function scheduleWorldEventsRefresh() {
+  if (getCurrentDataPreferences().data_saver_mode) {
+    return;
+  }
+
+  worldEventsStore.pendingRefresh = true;
+  if (worldEventsStore.refreshTimeout) {
+    return;
+  }
+
+  worldEventsStore.refreshTimeout = setTimeout(() => {
+    worldEventsStore.refreshTimeout = null;
+    worldEventsStore.pendingRefresh = false;
+    refreshWorldEventsStore();
+  }, REALTIME_REFRESH_DEBOUNCE_MS);
+}
+
+function ensureWorldEventsRealtimeSubscription() {
+  if (worldEventsStore.realtimeUnsub) {
+    return;
+  }
+
+  worldEventsStore.realtimeUnsub = onEventUpdate((msg) => {
+    if ((msg.type !== 'new' && msg.type !== 'update') || !msg.event) {
+      return;
+    }
+
+    const next = mergeEventToFront(cache.worldEvents || worldEventsStore.state.events, msg.event);
+    cache.worldEvents = next;
+    cache.lastFetch.worldEvents = Date.now();
+    updateSharedEventStore(worldEventsStore, {
+      events: next,
+      status: buildDataStatus('live', { lastUpdated: cache.lastFetch.worldEvents }),
+    });
+    scheduleWorldEventsRefresh();
+  });
+}
+
+function cleanupWorldEventsRealtimeSubscription() {
+  if (worldEventsStore.subscriberCount > 0) {
+    return;
+  }
+
+  if (worldEventsStore.refreshTimeout) {
+    clearTimeout(worldEventsStore.refreshTimeout);
+    worldEventsStore.refreshTimeout = null;
+  }
+
+  if (worldEventsStore.realtimeUnsub) {
+    worldEventsStore.realtimeUnsub();
+    worldEventsStore.realtimeUnsub = null;
+  }
+}
+
 /**
  * useMyEvents — returns the user's AOI events.
  */
-export function useMyEvents() {
-  const [events, setEvents] = useState(cache.myEvents || []);
-  const [loading, setLoading] = useState(!cache.myEvents);
-  const [error, setError] = useState(null);
+export function useMyEvents(enabled = true, refreshIntervalMs = null) {
+  const [events, setEvents] = useState(enabled ? myEventsStore.state.events : []);
+  const [loading, setLoading] = useState(enabled ? (myEventsStore.state.loading || !cache.myEvents) : false);
+  const [error, setError] = useState(enabled ? myEventsStore.state.error : null);
+  const [status, setStatus] = useState(myEventsStore.state.status);
+  const [preferences, setPreferences] = useState(getCurrentDataPreferences());
 
   const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchMyEvents('all');
-      cache.myEvents = data;
-      cache.lastFetch.myEvents = Date.now();
-      setEvents(data);
-    } catch (err) {
-      console.warn('[useMyEvents] API failed:', err.message);
-      setError(err);
+    if (!enabled) {
       setEvents([]);
-    } finally {
       setLoading(false);
+      setError(null);
+      setStatus(buildDataStatus('live'));
+      return;
     }
-  }, []);
+    await refreshMyEventsStore({ manual: true });
+  }, [enabled]);
+
+  useEffect(() => subscribeToDataPreferences(setPreferences), []);
 
   useEffect(() => {
-    if (isStale('myEvents')) refresh();
-  }, [refresh]);
+    if (!enabled) {
+      setEvents([]);
+      setLoading(false);
+      setError(null);
+      setStatus(buildDataStatus('live'));
+      return undefined;
+    }
 
-  // Listen for real-time updates
-  useEffect(() => {
-    const unsub = onEventUpdate((msg) => {
-      if (msg.type === 'aoi_alert' && msg.event) {
-        setEvents((prev) => {
-          const next = mergeEventToFront(prev, msg.event);
-          cache.myEvents = next;
-          cache.lastFetch.myEvents = Date.now();
-          return next;
-        });
-        refresh();
-      }
-
-      if ((msg.type === 'new' || msg.type === 'update') && msg.event) {
-        setEvents((prev) => {
-          const next = mergeEventToFront(prev, msg.event);
-          cache.myEvents = next;
-          cache.lastFetch.myEvents = Date.now();
-          return next;
-        });
-        refresh();
-      }
+    myEventsStore.subscriberCount += 1;
+    ensureMyEventsRealtimeSubscription();
+    hydrateOfflineCache('myEvents', myEventsStore).catch(() => {});
+    const unsub = subscribeSharedEventStore(myEventsStore, (nextState) => {
+      setEvents(nextState.events);
+      setLoading(nextState.loading);
+      setError(nextState.error);
+      setStatus(nextState.status);
     });
-    return unsub;
-  }, [refresh]);
 
-  return { events, loading, error, refresh };
+    if (isStale('myEvents')) {
+      refreshMyEventsStore();
+    }
+
+    return () => {
+      unsub();
+      myEventsStore.subscriberCount = Math.max(0, myEventsStore.subscriberCount - 1);
+      cleanupMyEventsRealtimeSubscription();
+    };
+  }, [enabled, preferences.data_saver_mode, preferences.offline_cache]);
+
+  useEffect(() => {
+    if (!enabled || !refreshIntervalMs || preferences.data_saver_mode) {
+      return undefined;
+    }
+
+    const intervalId = setInterval(() => {
+      refreshMyEventsStore();
+    }, refreshIntervalMs);
+
+    return () => clearInterval(intervalId);
+  }, [enabled, preferences.data_saver_mode, refreshIntervalMs]);
+
+  return { events, loading, error, refresh, status };
 }
 
 /**
  * useWorldEvents — returns top global events.
  */
-export function useWorldEvents() {
-  const [events, setEvents] = useState(cache.worldEvents || []);
-  const [loading, setLoading] = useState(!cache.worldEvents);
-  const [error, setError] = useState(null);
+export function useWorldEvents(refreshIntervalMs = null) {
+  const [events, setEvents] = useState(worldEventsStore.state.events);
+  const [loading, setLoading] = useState(worldEventsStore.state.loading || !cache.worldEvents);
+  const [error, setError] = useState(worldEventsStore.state.error);
+  const [status, setStatus] = useState(worldEventsStore.state.status);
+  const [preferences, setPreferences] = useState(getCurrentDataPreferences());
 
   const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchWorldEvents();
-      cache.worldEvents = data;
-      cache.lastFetch.worldEvents = Date.now();
-      setEvents(data);
-    } catch (err) {
-      console.warn('[useWorldEvents] API failed:', err.message);
-      setError(err);
-      setEvents([]);
-    } finally {
-      setLoading(false);
-    }
+    await refreshWorldEventsStore({ manual: true });
   }, []);
 
-  useEffect(() => {
-    if (isStale('worldEvents')) refresh();
-  }, [refresh]);
+  useEffect(() => subscribeToDataPreferences(setPreferences), []);
 
   useEffect(() => {
-    const unsub = onEventUpdate((msg) => {
-      if (msg.type === 'new' || msg.type === 'update') refresh();
+    worldEventsStore.subscriberCount += 1;
+    ensureWorldEventsRealtimeSubscription();
+    hydrateOfflineCache('worldEvents', worldEventsStore).catch(() => {});
+    const unsub = subscribeSharedEventStore(worldEventsStore, (nextState) => {
+      setEvents(nextState.events);
+      setLoading(nextState.loading);
+      setError(nextState.error);
+      setStatus(nextState.status);
     });
-    return unsub;
-  }, [refresh]);
 
-  return { events, loading, error, refresh };
+    if (isStale('worldEvents')) {
+      refreshWorldEventsStore();
+    }
+
+    return () => {
+      unsub();
+      worldEventsStore.subscriberCount = Math.max(0, worldEventsStore.subscriberCount - 1);
+      cleanupWorldEventsRealtimeSubscription();
+    };
+  }, [preferences.data_saver_mode, preferences.offline_cache]);
+
+  useEffect(() => {
+    if (!refreshIntervalMs || preferences.data_saver_mode) {
+      return undefined;
+    }
+
+    const intervalId = setInterval(() => {
+      refreshWorldEventsStore();
+    }, refreshIntervalMs);
+
+    return () => clearInterval(intervalId);
+  }, [preferences.data_saver_mode, refreshIntervalMs]);
+
+  return { events, loading, error, refresh, status };
 }
 
 /**
  * useAlerts — returns active alerts.
  */
-export function useAlerts() {
+export function useAlerts(enabled = true) {
   const [alerts, setAlerts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [meta, setMeta] = useState({ total: 0, unread: 0 });
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (params = {}) => {
+    if (!enabled) {
+      setAlerts([]);
+      setMeta({ total: 0, unread: 0 });
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
+    setError(null);
     try {
-      const data = await fetchAlerts();
-      setAlerts(data);
+      const data = await fetchAlerts(params);
+      setAlerts(data?.alerts || []);
+      setMeta({
+        total: Number(data?.total || 0),
+        unread: Number(data?.unread || 0),
+      });
     } catch (err) {
       console.warn('[useAlerts] API failed:', err.message);
       setError(err);
       setAlerts([]);
+      setMeta({ total: 0, unread: 0 });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  return { alerts, loading, error, refresh };
+  return { alerts, meta, loading, error, refresh };
 }
 
 /**
@@ -208,17 +765,19 @@ export function useAOIs(enabled = true) {
       setAois([]);
       setLoading(false);
       setError(null);
-      return;
+      return { aois: [] };
     }
     setLoading(true);
     setError(null);
     try {
       const data = await fetchMyAOIs();
       setAois(data.aois || []);
+      return data;
     } catch (err) {
       console.warn('[useAOIs] API failed:', err.message);
       setError(err);
       setAois([]);
+      throw err;
     } finally {
       setLoading(false);
     }
@@ -305,115 +864,94 @@ export function useProfile(enabled = true) {
  * useLeonaChat — manages chat state with LEONA AI.
  */
 export function useLeonaChat() {
-  const [messages, setMessages] = useState([
-    {
-      id: 'msg0',
-      type: 'agent',
-      text: "I'm monitoring active events globally. How can I help you today?",
-    },
-  ]);
-  const [sending, setSending] = useState(false);
-  const messagesRef = useRef(messages);
+  const [messages, setMessages] = useState(leonaChatStore.messages);
+  const [sending, setSending] = useState(leonaChatStore.sending);
+  const [hasQueuedRequest, setHasQueuedRequest] = useState(!!leonaChatStore.queuedRequest);
 
   useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+    const listener = (next) => {
+      setMessages(next.messages);
+      setSending(next.sending);
+      setHasQueuedRequest(!!next.hasQueuedRequest);
+    };
+
+    leonaChatStore.listeners.add(listener);
+    return () => {
+      leonaChatStore.listeners.delete(listener);
+    };
+  }, []);
+
+  const setSharedMessages = useCallback((next) => {
+    const resolvedMessages = typeof next === 'function' ? next(leonaChatStore.messages) : next;
+    updateLeonaChat({ messages: resolvedMessages });
+  }, []);
 
   const send = useCallback(async (userText, options = {}) => {
-    const pendingId = `pending-${Date.now()}`;
-    const startedAt = Date.now();
-    console.log('[useLeonaChat] send:start', {
-      requestKind: options.requestKind || 'generic',
-      hasPendingText: !!options.pendingText,
-      promptLength: userText.length,
-    });
-    const userMsg = { id: Date.now().toString(), type: 'user', text: userText };
-    setMessages((prev) => [...prev, userMsg]);
-    if (options.pendingText) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: pendingId,
+    if (leonaChatStore.sending) {
+      console.log('[useLeonaChat] send:queued while request in flight', {
+        requestKind: options.requestKind || 'generic',
+      });
+      const queuedUserMsg = { id: Date.now().toString(), type: 'user', text: userText };
+      const queuedPendingId = `pending-queued-${Date.now()}`;
+      const queuedMessages = [...leonaChatStore.messages, queuedUserMsg];
+      if (options.pendingText) {
+        queuedMessages.push({
+          id: queuedPendingId,
           type: 'agent',
           text: options.pendingText,
           pending: true,
-        },
-      ]);
-    }
-    setSending(true);
-
-    try {
-      // Build messages array for API
-      const apiMessages = [
-        ...messagesRef.current.map((m) => ({
-          role: m.type === 'agent' ? 'assistant' : 'user',
-          content: m.text,
-        })),
-        { role: 'user', content: userText },
-      ];
-
-      const data = await sendLeonaMessage(apiMessages);
-      const reply = data.message || data.reply || data.content || 'Processing your request...';
-      console.log('[useLeonaChat] send:success', {
-        requestKind: options.requestKind || 'generic',
-        elapsedMs: Date.now() - startedAt,
-        replyLength: reply.length,
-      });
-      const agentMsg = { id: (Date.now() + 1).toString(), type: 'agent', text: reply };
-      setMessages((prev) => {
-        const withoutPending = prev.filter((msg) => msg.id !== pendingId);
-        return [...withoutPending, agentMsg];
-      });
-    } catch (err) {
-      console.warn('[useLeonaChat] send:failed', {
-        requestKind: options.requestKind || 'generic',
-        elapsedMs: Date.now() - startedAt,
-        error: err.message,
-      });
-      // Fallback response
-      const agentMsg = {
-        id: (Date.now() + 1).toString(),
-        type: 'agent',
-        text: options.failureText || 'I\'m having trouble connecting to the server. Please try again shortly.',
+        });
+      }
+      updateLeonaChat({ messages: queuedMessages });
+      leonaChatStore.queuedRequest = {
+        userText,
+        options,
+        queuedPendingId,
+        queuedUserMsgId: queuedUserMsg.id,
       };
-      setMessages((prev) => {
-        const withoutPending = prev.filter((msg) => msg.id !== pendingId);
-        return [...withoutPending, agentMsg];
+      console.log('[useLeonaChat] send:queued:stored', {
+        userText,
+        queuedPendingId,
+        queuedUserMsgId: queuedUserMsg.id,
       });
-    } finally {
-      console.log('[useLeonaChat] send:complete', {
-        requestKind: options.requestKind || 'generic',
-        elapsedMs: Date.now() - startedAt,
-      });
-      setSending(false);
+      return;
     }
+    await executeLeonaChatSend(userText, options);
   }, []);
 
-  return { messages, sending, send, setMessages };
+  return { messages, sending, hasQueuedRequest, send, setMessages: setSharedMessages };
 }
 
 /**
  * useLeonaBrief — fetches LEONA AI brief.
  */
-export function useLeonaBrief(context) {
+export function useLeonaBrief(context, enabled = true) {
   const [brief, setBrief] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
+  const [error, setError] = useState(null);
   const contextKey = JSON.stringify(context ?? null);
 
   const refresh = useCallback(async () => {
+    if (!enabled) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
+    setError(null);
     try {
       const data = await getLeonaBrief(context);
       setBrief(data);
     } catch (err) {
       console.warn('[useLeonaBrief] API failed:', err.message);
       setBrief(null);
+      setError(err);
     } finally {
       setLoading(false);
     }
-  }, [contextKey]);
+  }, [contextKey, enabled]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  return { brief, loading, refresh };
+  return { brief, loading, error, refresh };
 }

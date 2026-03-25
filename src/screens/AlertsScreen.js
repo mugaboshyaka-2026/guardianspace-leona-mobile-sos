@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useContext } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -8,64 +8,87 @@ import {
   SafeAreaView,
   ActivityIndicator,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { colors, sevColors, typeIcons, spacing } from '../theme';
-import { useMyEvents, useWorldEvents } from '../hooks/useEvents';
-import { fetchMyFavorites } from '../lib/api';
+import { isAccessDeniedError, useAlerts } from '../hooks/useEvents';
+import { fetchMyFavorites, markAlertRead, markAllAlertsRead, normalizeAlertToEvent } from '../lib/api';
 import LeonaHeader from '../components/LeonaHeader';
-import { AppContext } from '../../App';
-import { filterEventsForConfig } from '../lib/locality';
-import { limitEventsForProduct } from '../lib/products';
+import { useAuth } from '../lib/auth';
 
-// Helper: "2d ago", "1w ago", etc.
-function getTimeSince(dateStr) {
+function getTimeSince(dateStr, now = Date.now()) {
   try {
-    const diff = Date.now() - new Date(dateStr).getTime();
+    const eventTime = new Date(dateStr).getTime();
+    if (!Number.isFinite(eventTime)) {
+      return '';
+    }
+    const diff = Math.max(0, now - eventTime);
     const mins = Math.floor(diff / 60000);
     if (mins < 60) return `${mins}m ago`;
     const hrs = Math.floor(mins / 60);
     if (hrs < 24) return `${hrs}h ago`;
     const days = Math.floor(hrs / 24);
     if (days < 7) return `${days}d ago`;
-    const weeks = Math.floor(days / 7);
-    return `${weeks}w ago`;
+    return `${Math.floor(days / 7)}w ago`;
   } catch {
     return '';
   }
 }
 
-function sortEventsNewestFirst(events = []) {
-  return [...events].sort((a, b) => {
-    const aTime = new Date(a.created_at || 0).getTime();
-    const bTime = new Date(b.created_at || 0).getTime();
+function sortNewestFirst(items = []) {
+  return [...items].sort((a, b) => {
+    const aTime = new Date(a.created_at || a.sent_at || 0).getTime();
+    const bTime = new Date(b.created_at || b.sent_at || 0).getTime();
     return bTime - aTime;
   });
 }
 
-const AlertsScreen = ({ navigation }) => {
-  const { userConfig } = useContext(AppContext);
+const AlertsScreen = ({ navigation, route }) => {
+  const { isLoaded: authLoaded, isSignedIn, authReady } = useAuth();
   const [activeTab, setActiveTab] = useState('MY');
-
-  // ── Live API data ──
-  const { events: myAlerts, loading: myLoading, error: myError } = useMyEvents();
-  const { events: worldEvents, loading: worldLoading, error: worldError } = useWorldEvents();
-  const filteredMyAlerts = useMemo(
-    () => limitEventsForProduct(
-      filterEventsForConfig(myAlerts.length > 0 ? myAlerts : worldEvents, userConfig, 'local'),
-      userConfig?.product
-    ),
-    [myAlerts, userConfig, worldEvents]
-  );
-  const globalEvents = useMemo(() => {
-    const myIds = new Set(filteredMyAlerts.map((e) => e.id));
-    return limitEventsForProduct(
-      filterEventsForConfig(worldEvents, userConfig, 'global').filter((e) => !myIds.has(e.id)),
-      userConfig?.product
-    );
-  }, [filteredMyAlerts, userConfig, worldEvents]);
-
-  // ── Favorites ──
   const [favorites, setFavorites] = useState([]);
   const [favLoading, setFavLoading] = useState(false);
+  const [nowTs, setNowTs] = useState(Date.now());
+  const {
+    alerts,
+    meta,
+    loading,
+    error,
+    refresh,
+  } = useAlerts(myDataAuthEnabled);
+
+  const myDataAuthEnabled = isSignedIn && authReady;
+  const myDataRequiresAuth = authLoaded && !myDataAuthEnabled;
+  const alertsUnavailable = myDataRequiresAuth || isAccessDeniedError(error);
+
+  const normalizedAlerts = useMemo(
+    () => sortNewestFirst((alerts || []).map(normalizeAlertToEvent)),
+    [alerts]
+  );
+  const unreadAlerts = useMemo(
+    () => normalizedAlerts.filter((alert) => !alert.is_read),
+    [normalizedAlerts]
+  );
+  const readAlerts = useMemo(
+    () => normalizedAlerts.filter((alert) => alert.is_read),
+    [normalizedAlerts]
+  );
+  const activeAlerts = activeTab === 'MY' ? unreadAlerts : readAlerts;
+
+  const groupedAlerts = useMemo(() => {
+    const groups = [
+      { key: 'critical', title: 'CRITICAL', color: sevColors.critical, data: [] },
+      { key: 'high', title: 'HIGH', color: sevColors.high, data: [] },
+      { key: 'elevated', title: 'ELEVATED', color: sevColors.elevated, data: [] },
+      { key: 'monitoring', title: 'MONITORING', color: sevColors.monitoring, data: [] },
+    ];
+    activeAlerts.forEach((alert) => {
+      const target = groups.find((group) => group.key === alert.severity);
+      if (target) {
+        target.data.push(alert);
+      }
+    });
+    return groups.filter((group) => group.data.length > 0);
+  }, [activeAlerts]);
 
   const loadFavorites = useCallback(async () => {
     setFavLoading(true);
@@ -80,240 +103,221 @@ const AlertsScreen = ({ navigation }) => {
     }
   }, []);
 
-  // Fetch favorites when the tab is selected
   useEffect(() => {
-    if (activeTab === 'FAVORITES') loadFavorites();
+    const nextTab = route?.params?.activeTab;
+    if (nextTab === 'MY' || nextTab === 'ARCHIVE' || nextTab === 'FAVORITES') {
+      setActiveTab(nextTab);
+    } else if (nextTab === 'GLOBAL') {
+      setActiveTab('ARCHIVE');
+    }
+  }, [route?.params?.activeTab]);
+
+  useFocusEffect(useCallback(() => {
+    if (myDataAuthEnabled) {
+      refresh().catch(() => {});
+    }
+    if (activeTab === 'FAVORITES') {
+      loadFavorites().catch(() => {});
+    }
+  }, [activeTab, loadFavorites, myDataAuthEnabled, refresh]));
+
+  useEffect(() => {
+    if (activeTab === 'FAVORITES') {
+      loadFavorites().catch(() => {});
+    }
   }, [activeTab, loadFavorites]);
 
-  const isLoading = activeTab === 'MY'
-    ? myLoading
-    : activeTab === 'GLOBAL'
-      ? worldLoading
-      : favLoading;
-  const activeError = activeTab === 'MY'
-    ? myError
-    : activeTab === 'GLOBAL'
-      ? worldError
-      : null;
-
-  const currentEvents = activeTab === 'MY' ? filteredMyAlerts
-    : activeTab === 'GLOBAL' ? globalEvents
-    : []; // FAVORITES uses its own list
-  const orderedEvents = useMemo(() => sortEventsNewestFirst(currentEvents), [currentEvents]);
-
-  // Group by severity
-  const grouped = useMemo(() => {
-    const groups = [
-      { key: 'critical', title: 'CRITICAL', color: sevColors.critical, data: [] },
-      { key: 'high', title: 'HIGH', color: sevColors.high, data: [] },
-      { key: 'elevated', title: 'ELEVATED', color: sevColors.elevated, data: [] },
-      { key: 'monitoring', title: 'MONITORING', color: sevColors.monitoring, data: [] },
-    ];
-    orderedEvents.forEach((e) => {
-      const g = groups.find((g) => g.key === e.severity);
-      if (g) g.data.push(e);
-    });
-    return groups.filter((g) => g.data.length > 0);
-  }, [orderedEvents]);
-
   useEffect(() => {
-    console.log('[Alerts] filter state', {
-      activeTab,
-      configuredEventTypes: userConfig?.eventTypes || [],
-      configuredRadius: userConfig?.radius || null,
-      configuredAois: userConfig?.aois || [],
-      sourceMyAlertsCount: myAlerts.length,
-      sourceWorldEventsCount: worldEvents.length,
-      filteredMyAlertsCount: filteredMyAlerts.length,
-      globalEventsCount: globalEvents.length,
-    });
-  }, [activeTab, filteredMyAlerts.length, globalEvents.length, myAlerts.length, userConfig, worldEvents.length]);
+    const intervalId = setInterval(() => setNowTs(Date.now()), 60000);
+    return () => clearInterval(intervalId);
+  }, []);
 
-  const handleAlertPress = (event) => {
-    navigation.navigate('EventDetail', { event });
+  const handleAlertPress = async (alert) => {
+    if (alert?.alert_id && !alert?.is_read) {
+      await markAlertRead(alert.alert_id).catch((err) => {
+        console.warn('[Alerts] Mark read failed:', err.message);
+      });
+      await refresh().catch(() => {});
+    }
+
+    navigation.navigate('EventDetail', { event: alert });
   };
 
-  const getTimeAgo = (severity) => {
-    const times = { critical: '2m', high: '14m', elevated: '1h', monitoring: '3h' };
-    return times[severity] || '5m';
-  };
-
-  const renderAlertRow = (event) => (
+  const renderAlertRow = (alert, viewed = false) => (
     <TouchableOpacity
-      key={event.id}
-      onPress={() => handleAlertPress(event)}
+      key={alert.alert_id || alert.id}
+      onPress={() => handleAlertPress(alert)}
       activeOpacity={0.6}
-      style={styles.alertRow}
+      style={[styles.alertRow, viewed && styles.alertRowViewed]}
     >
-      <View style={[styles.iconContainer, { borderColor: sevColors[event.severity] || colors.border }]}>
-        <Text style={styles.iconEmoji}>{typeIcons[event.type] || '📍'}</Text>
+      <View style={[styles.iconContainer, viewed && styles.iconContainerViewed, { borderColor: sevColors[alert.severity] || colors.border }]}>
+        <Text style={styles.iconEmoji}>{typeIcons[alert.type] || '!'}</Text>
       </View>
 
       <View style={styles.alertContent}>
-        <Text style={styles.alertTitle} numberOfLines={2}>{event.title}</Text>
-        <Text style={styles.alertLocation} numberOfLines={1}>{event.location}</Text>
+        <Text style={[styles.alertTitle, viewed && styles.alertTitleViewed]} numberOfLines={2}>{alert.title}</Text>
+        <Text style={[styles.alertLocation, viewed && styles.alertLocationViewed]} numberOfLines={2}>
+          {alert.body || alert.location || 'Notification'}
+        </Text>
       </View>
 
       <View style={styles.alertRight}>
-        <View style={[styles.severityPill, { backgroundColor: `${sevColors[event.severity]}20`, borderColor: sevColors[event.severity] }]}>
-          <Text style={[styles.severityPillText, { color: sevColors[event.severity] }]}>
-            {event.severity.toUpperCase()}
+        <View style={[styles.severityPill, viewed && styles.severityPillViewed, { backgroundColor: `${sevColors[alert.severity]}20`, borderColor: sevColors[alert.severity] }]}>
+          <Text style={[styles.severityPillText, viewed ? styles.severityPillTextViewed : { color: sevColors[alert.severity] }]}>
+            {alert.severity.toUpperCase()}
           </Text>
         </View>
-        <Text style={styles.alertTime}>{getTimeAgo(event.severity)}</Text>
+        <Text style={styles.alertTime}>{getTimeSince(alert.created_at || alert.sent_at, nowTs)}</Text>
       </View>
     </TouchableOpacity>
   );
+
+  const renderFavorites = () => {
+    if (favLoading) {
+      return <ActivityIndicator color={colors.blue} style={styles.loadingIndicator} />;
+    }
+
+    if (favorites.length === 0) {
+      return (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>No favorites yet</Text>
+          <Text style={styles.emptyText}>Tap the star on any event to save it here.</Text>
+        </View>
+      );
+    }
+
+    return favorites.map((fav) => {
+      const event = fav.event_data || fav;
+      return (
+        <TouchableOpacity
+          key={fav.id || fav.event_id}
+          onPress={() => navigation.navigate('EventDetail', { event })}
+          activeOpacity={0.6}
+          style={styles.alertRow}
+        >
+          <View style={[styles.iconContainer, { borderColor: sevColors[event.severity] || colors.border }]}>
+            <Text style={styles.iconEmoji}>{typeIcons[event.type] || '!'}</Text>
+          </View>
+          <View style={styles.alertContent}>
+            <Text style={styles.alertTitle} numberOfLines={2}>{event.title}</Text>
+            <Text style={styles.alertLocation} numberOfLines={1}>{event.location || 'Saved event'}</Text>
+          </View>
+          <View style={styles.alertRight}>
+            <Text style={styles.alertTime}>{getTimeSince(fav.created_at, nowTs)}</Text>
+          </View>
+        </TouchableOpacity>
+      );
+    });
+  };
+
+  const totalBadgeCount = activeTab === 'MY'
+    ? Number(meta?.unread || 0)
+    : activeTab === 'ARCHIVE'
+      ? readAlerts.length
+      : favorites.length;
+
+  const showLoading = activeTab !== 'FAVORITES' && (!authLoaded || (isSignedIn && !authReady) || loading);
+  const showEmptyAlerts = !showLoading && !alertsUnavailable && !error && activeTab !== 'FAVORITES' && groupedAlerts.length === 0;
 
   return (
     <SafeAreaView style={styles.container}>
       <LeonaHeader
         title="ALERTS"
-        right={
+        right={(
           <View style={styles.totalBadge}>
-            <Text style={styles.totalBadgeText}>
-              {activeTab === 'FAVORITES' ? favorites.length : currentEvents.length}
-            </Text>
+            <Text style={styles.totalBadgeText}>{totalBadgeCount}</Text>
           </View>
-        }
+        )}
       />
 
-      {/* Tab Bar: MY ALERTS / GLOBAL / ★ FAVORITES — equal thirds */}
       <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'MY' && styles.tabButtonActive]}
-          onPress={() => setActiveTab('MY')}
-        >
+        <TouchableOpacity style={[styles.tabButton, activeTab === 'MY' && styles.tabButtonActive]} onPress={() => setActiveTab('MY')}>
           <Text style={[styles.tabLabel, activeTab === 'MY' && styles.tabLabelActive]}>MY ALERTS</Text>
           {activeTab === 'MY' && <View style={styles.tabUnderline} />}
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'GLOBAL' && styles.tabButtonActive]}
-          onPress={() => setActiveTab('GLOBAL')}
-        >
-          <Text style={[styles.tabLabel, activeTab === 'GLOBAL' && styles.tabLabelActive]}>GLOBAL</Text>
-          {activeTab === 'GLOBAL' && <View style={styles.tabUnderline} />}
+        <TouchableOpacity style={[styles.tabButton, activeTab === 'ARCHIVE' && styles.tabButtonActive]} onPress={() => setActiveTab('ARCHIVE')}>
+          <Text style={[styles.tabLabel, activeTab === 'ARCHIVE' && styles.tabLabelActive]}>ARCHIVE</Text>
+          {activeTab === 'ARCHIVE' && <View style={styles.tabUnderline} />}
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'FAVORITES' && styles.tabButtonActive]}
-          onPress={() => setActiveTab('FAVORITES')}
-        >
-          <View style={styles.favTabInner}>
-            <Text style={[styles.favStar, activeTab === 'FAVORITES' && styles.favStarActive]}>★</Text>
-            <Text style={[styles.tabLabel, activeTab === 'FAVORITES' && styles.tabLabelActive]}>FAVORITES</Text>
-          </View>
+        <TouchableOpacity style={[styles.tabButton, activeTab === 'FAVORITES' && styles.tabButtonActive]} onPress={() => setActiveTab('FAVORITES')}>
+          <Text style={[styles.tabLabel, activeTab === 'FAVORITES' && styles.tabLabelActive]}>FAVORITES</Text>
           {activeTab === 'FAVORITES' && <View style={styles.tabUnderline} />}
         </TouchableOpacity>
       </View>
 
-      {/* Alerts List (MY / GLOBAL) */}
-      {activeTab !== 'FAVORITES' && (
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {isLoading && (
-            <ActivityIndicator color={colors.blue} style={styles.loadingIndicator} />
-          )}
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {activeTab === 'MY' && Number(meta?.unread || 0) > 0 && (
+          <View style={styles.markAllRow}>
+            <Text style={styles.markAllCopy}>{meta.unread} unread notifications</Text>
+            <TouchableOpacity
+              style={styles.markAllButton}
+              onPress={async () => {
+                await markAllAlertsRead().catch((err) => {
+                  console.warn('[Alerts] Mark all read failed:', err.message);
+                });
+                await refresh().catch(() => {});
+              }}
+            >
+              <Text style={styles.markAllButtonText}>Mark all read</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
-          {!isLoading && activeError && (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>Unable to load alerts right now</Text>
-            </View>
-          )}
+        {showLoading && <ActivityIndicator color={colors.blue} style={styles.loadingIndicator} />}
 
-          {!isLoading && !activeError && grouped.map((section) => (
-            <View key={section.key} style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <View style={styles.sectionTitleRow}>
-                  <View style={[styles.sectionDot, { backgroundColor: section.color }]} />
-                  <Text style={[styles.sectionTitle, { color: section.color }]}>{section.title}</Text>
-                </View>
-                <View style={[styles.countBadge, { backgroundColor: `${section.color}20` }]}>
-                  <Text style={[styles.countBadgeText, { color: section.color }]}>{section.data.length}</Text>
-                </View>
+        {!showLoading && alertsUnavailable && activeTab !== 'FAVORITES' && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>Sign in required</Text>
+            <Text style={styles.emptyText}>Alerts are only available for authenticated users.</Text>
+          </View>
+        )}
+
+        {!showLoading && error && !alertsUnavailable && activeTab !== 'FAVORITES' && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>Unable to load alerts</Text>
+            <Text style={styles.emptyText}>{error?.message || 'Please try again shortly.'}</Text>
+          </View>
+        )}
+
+        {activeTab !== 'FAVORITES' && groupedAlerts.map((section) => (
+          <View key={section.key} style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleRow}>
+                <View style={[styles.sectionDot, { backgroundColor: section.color }]} />
+                <Text style={[styles.sectionTitle, { color: section.color }]}>{section.title}</Text>
               </View>
-              <View style={styles.alertsList}>
-                {section.data.map((event) => renderAlertRow(event))}
+              <View style={[styles.countBadge, { backgroundColor: `${section.color}20` }]}>
+                <Text style={[styles.countBadgeText, { color: section.color }]}>{section.data.length}</Text>
               </View>
             </View>
-          ))}
-
-          {!isLoading && !activeError && grouped.length === 0 && (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>No alerts in this category</Text>
+            <View style={styles.alertsList}>
+              {section.data.map((alert) => renderAlertRow(alert, activeTab === 'ARCHIVE'))}
             </View>
-          )}
+          </View>
+        ))}
 
-          <View style={styles.bottomSpacer} />
-        </ScrollView>
-      )}
+        {showEmptyAlerts && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>{activeTab === 'MY' ? 'No unread alerts' : 'No archived alerts'}</Text>
+            <Text style={styles.emptyText}>
+              {activeTab === 'MY'
+                ? 'New notifications will appear here after the backend creates alerts for your account.'
+                : 'Read notifications will move here once opened.'}
+            </Text>
+          </View>
+        )}
 
-      {/* Favorites List */}
-      {activeTab === 'FAVORITES' && (
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {favLoading && (
-            <ActivityIndicator color={colors.blue} style={{ paddingVertical: 40 }} />
-          )}
-
-          {!favLoading && favorites.length > 0 && favorites.map((fav) => {
-            const event = fav.event_data || fav;
-            const savedDate = fav.created_at ? getTimeSince(fav.created_at) : '';
-            return (
-              <TouchableOpacity
-                key={fav.id || fav.event_id}
-                onPress={() => handleAlertPress(event)}
-                activeOpacity={0.6}
-                style={styles.favRow}
-              >
-                <View style={[styles.iconContainer, { borderColor: sevColors[event.severity] || colors.border }]}>
-                  <Text style={styles.iconEmoji}>{typeIcons[event.type] || '📍'}</Text>
-                </View>
-                <View style={styles.alertContent}>
-                  <Text style={styles.alertTitle} numberOfLines={2}>{event.title}</Text>
-                  <Text style={styles.favMeta}>{event.location}{savedDate ? ` · Saved ${savedDate}` : ''}</Text>
-                </View>
-                <View style={[styles.favSevDot, { backgroundColor: sevColors[event.severity] || colors.textDim }]} />
-              </TouchableOpacity>
-            );
-          })}
-
-          {!favLoading && favorites.length === 0 && (
-            <View style={styles.emptyState}>
-              <Text style={styles.favEmptyIcon}>★</Text>
-              <Text style={styles.emptyText}>No favorites yet</Text>
-              <Text style={styles.favHint}>Tap ★ on any event to save it here</Text>
-            </View>
-          )}
-
-          <View style={styles.bottomSpacer} />
-        </ScrollView>
-      )}
+        {activeTab === 'FAVORITES' && renderFavorites()}
+        <View style={styles.bottomSpacer} />
+      </ScrollView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-  },
-  headerTitle: { color: colors.text, fontSize: 18, fontWeight: '700', letterSpacing: 1 },
   totalBadge: { backgroundColor: colors.blue, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: 12 },
   totalBadgeText: { color: colors.white, fontSize: 12, fontWeight: '700' },
-
-  // Tab Bar
   tabBar: {
     flexDirection: 'row',
     borderBottomColor: colors.border,
@@ -337,9 +341,35 @@ const styles = StyleSheet.create({
     height: 2,
     backgroundColor: colors.blue,
   },
-
   scrollView: { flex: 1 },
   scrollContent: { paddingBottom: spacing.xl },
+  markAllRow: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panel,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  markAllCopy: { color: colors.textSec, fontSize: 12, fontWeight: '600' },
+  markAllButton: {
+    borderRadius: 999,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.blue,
+  },
+  markAllButtonText: { color: colors.white, fontSize: 12, fontWeight: '700' },
+  loadingIndicator: { paddingVertical: 40 },
+  emptyState: { paddingVertical: 60, alignItems: 'center', gap: 8, paddingHorizontal: spacing.lg },
+  emptyTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  emptyText: { color: colors.textDim, fontSize: 13, textAlign: 'center' },
   section: { marginBottom: spacing.sm },
   sectionHeader: {
     flexDirection: 'row',
@@ -366,6 +396,11 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     gap: spacing.md,
   },
+  alertRowViewed: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderColor: 'rgba(255,255,255,0.06)',
+    opacity: 0.72,
+  },
   iconContainer: {
     width: 40,
     height: 40,
@@ -376,63 +411,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexShrink: 0,
   },
+  iconContainerViewed: { backgroundColor: 'rgba(255,255,255,0.03)' },
   iconEmoji: { fontSize: 18 },
   alertContent: { flex: 1, gap: 2 },
   alertTitle: { color: colors.text, fontSize: 13, fontWeight: '600' },
+  alertTitleViewed: { color: colors.textSec },
   alertLocation: { color: colors.textSec, fontSize: 11 },
+  alertLocationViewed: { color: colors.textDim },
   alertRight: { alignItems: 'flex-end', gap: spacing.xs, flexShrink: 0 },
   severityPill: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: 4, borderWidth: 1 },
+  severityPillViewed: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
   severityPillText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
+  severityPillTextViewed: { color: colors.textDim },
   alertTime: { color: colors.textDim, fontSize: 10, fontWeight: '500' },
-  emptyState: { paddingVertical: 60, alignItems: 'center', gap: 8 },
-  emptyText: { color: colors.textDim, fontSize: 13 },
-  loadingIndicator: { paddingVertical: 40 },
   bottomSpacer: { height: spacing.xl },
-
-  // Favorites tab inner (star + label)
-  favTabInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  favStar: {
-    color: colors.textDim,
-    fontSize: 14,
-  },
-  favStarActive: {
-    color: '#FFD700',
-  },
-
-  // Favorites row
-  favRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    gap: spacing.md,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-  },
-  favMeta: {
-    color: colors.textSec,
-    fontSize: 11,
-  },
-  favSevDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    flexShrink: 0,
-  },
-  favEmptyIcon: {
-    fontSize: 36,
-    color: colors.textDim,
-    opacity: 0.3,
-  },
-  favHint: {
-    color: colors.textDim,
-    fontSize: 11,
-    marginTop: 4,
-  },
 });
 
 export default AlertsScreen;
