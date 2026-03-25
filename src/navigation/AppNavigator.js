@@ -18,7 +18,7 @@ import DataSourcesScreen from '../screens/DataSourcesScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SubscriptionScreen from '../screens/SubscriptionScreen';
 import CallScreen from '../screens/CallScreen';
-import { useMyEvents } from '../hooks/useEvents';
+import { useAlerts, useMyEvents } from '../hooks/useEvents';
 import { useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
 import { filterEventsForConfig } from '../lib/locality';
@@ -182,6 +182,7 @@ export const AppNavigator = () => {
   const { isSignedIn, authReady } = useAuth();
   const productConfig = getProductConfig(userConfig?.product);
   const myDataAuthEnabled = isSignedIn && authReady;
+  const { meta: alertsMeta } = useAlerts(myDataAuthEnabled);
   const { events: myEvents } = useMyEvents(myDataAuthEnabled);
   const { events: worldEvents } = useWorldEvents();
   const filteredMyEvents = useMemo(
@@ -199,7 +200,9 @@ export const AppNavigator = () => {
     ),
     [filteredMyEvents, userConfig?.criticalOnly]
   );
-  const alertsBadge = myDataAuthEnabled && badgeEvents.length > 0 ? badgeEvents.length : undefined;
+  const alertsBadge = myDataAuthEnabled
+    ? (alertsMeta?.unread > 0 ? alertsMeta.unread : undefined)
+    : undefined;
 
   return (
     <Tab.Navigator

@@ -9,7 +9,7 @@ try {
   SecureStore = null;
 }
 
-const TOKEN_KEY = 'leona_last_registered_push_token_v1';
+const TOKEN_KEY = 'leona_last_registered_expo_push_token_v1';
 
 async function getStoredToken() {
   try {

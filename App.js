@@ -8,12 +8,11 @@ import { AuthProvider, useAuth } from './src/lib/auth';
 import { colors } from './src/theme';
 import { useAOIs, useProfile, resetEventCache } from './src/hooks/useEvents';
 import BrandedLoader from './src/components/BrandedLoader';
-import { onEventUpdate } from './src/lib/realtime';
-import { addNotificationResponseListener, consumeLastNotificationResponse, getDevicePushToken, initNotifications, notifyRealtimeUpdate } from './src/lib/notifications';
+import { addNotificationResponseListener, consumeLastNotificationResponse, getExpoPushToken, initNotifications } from './src/lib/notifications';
 import { syncPushToken } from './src/lib/pushRegistration';
-import { markAlertViewed } from './src/lib/viewedAlerts';
 import { getStoredSettingsPreferences } from './src/lib/settingsPreferences';
 import { setCurrentDataPreferences } from './src/lib/dataPreferences';
+import { markAlertRead, normalizeAlertToEvent } from './src/lib/api';
 
 // App context for onboarding completion
 export const AppContext = createContext();
@@ -60,8 +59,40 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
     }
   }, [isSignedIn, setOnboardingComplete]);
 
+  const buildEventFromNotificationResponse = React.useCallback((response) => {
+    const content = response?.notification?.request?.content || {};
+    const data = content?.data || {};
+    const nestedEvent = data?.event;
+
+    if (nestedEvent?.id || nestedEvent?.event_id) {
+      return nestedEvent;
+    }
+
+    if (!data?.alert_id && !data?.alertId && !data?.event_id && !data?.eventId) {
+      return null;
+    }
+
+    return normalizeAlertToEvent({
+      id: data?.alert_id || data?.alertId || null,
+      event_id: data?.event_id || data?.eventId || null,
+      title: content?.title || data?.title || 'Alert',
+      body: content?.body || data?.body || '',
+      severity: data?.severity || 'high',
+      event_category: data?.category || data?.event_category || data?.type || 'alert',
+      event_lat: data?.lat,
+      event_lng: data?.lng,
+      channel: data?.channel || 'push',
+      created_at: new Date().toISOString(),
+    });
+  }, []);
+
   const handleNotificationOpen = React.useCallback(async (response) => {
-    const event = response?.notification?.request?.content?.data?.event;
+    const event = buildEventFromNotificationResponse(response);
+    const alertId =
+      response?.notification?.request?.content?.data?.alert_id
+      || response?.notification?.request?.content?.data?.alertId
+      || event?.alert_id
+      || null;
     const canNavigateToApp = navigationRef.isReady() && onboardingComplete;
 
     if (!event) {
@@ -83,9 +114,11 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       return;
     }
 
-    await markAlertViewed(event).catch((err) => {
-      console.warn('[App] Failed to mark alert viewed from notification:', err.message);
-    });
+    if (alertId) {
+      await markAlertRead(alertId).catch((err) => {
+        console.warn('[App] Failed to mark alert read from notification:', err.message);
+      });
+    }
 
     console.log('[App] Navigating from notification tap', {
       eventId: event.id || event.event_id || null,
@@ -99,7 +132,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       },
     });
     setPendingNotificationResponse(null);
-  }, [onboardingComplete]);
+  }, [buildEventFromNotificationResponse, onboardingComplete]);
 
   useEffect(() => {
     if (!pendingNotificationResponse || !navigationRef.isReady() || !onboardingComplete) {
@@ -288,11 +321,11 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       return;
     }
 
-    console.log('[App] Initializing notifications/realtime bridge');
+    console.log('[App] Initializing notifications');
     initNotifications().catch((err) => {
       console.warn('[LEONA Notifications] Init failed:', err.message);
     });
-    getDevicePushToken()
+    getExpoPushToken()
       .then((token) => {
         if (!token) {
           return null;
@@ -318,17 +351,6 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         console.warn('[App] Last notification response check failed:', err.message);
       });
 
-    const unsubRealtime = onEventUpdate((update) => {
-      console.log('[App] Realtime event received for notification', {
-        type: update?.type,
-        eventId: update?.event?.id || update?.event?.event_id || null,
-        severity: update?.event?.severity || null,
-      });
-      notifyRealtimeUpdate(update).catch((err) => {
-        console.warn('[LEONA Notifications] Schedule failed:', err.message);
-      });
-    });
-
     const unsubNotifications = addNotificationResponseListener((response) => {
       console.log('[App] Notification response received', {
         data: response?.notification?.request?.content?.data || null,
@@ -339,7 +361,6 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
     });
 
     return () => {
-      unsubRealtime?.();
       unsubNotifications?.();
     };
   }, [handleNotificationOpen, isSignedIn, pushNotificationsEnabled]);

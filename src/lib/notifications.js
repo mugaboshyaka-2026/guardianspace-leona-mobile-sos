@@ -11,7 +11,6 @@ try {
   Constants = null;
 }
 
-const deliveredKeys = new Set();
 let initialized = false;
 let responseSubscription = null;
 let lastConsumedResponseId = null;
@@ -37,14 +36,13 @@ export async function initNotifications() {
       hasNotifications: !!Notifications,
       initialized,
     });
-    return;
+    return null;
   }
 
   initialized = true;
   console.log('[LEONA Notifications] Initializing');
 
   if (Platform.OS === 'android') {
-    console.log('[LEONA Notifications] Configuring Android channel');
     await Notifications.setNotificationChannelAsync('alerts', {
       name: 'Alerts',
       importance: Notifications.AndroidImportance.HIGH,
@@ -56,12 +54,10 @@ export async function initNotifications() {
 
   const currentPermissions = await Notifications.getPermissionsAsync();
   let finalStatus = currentPermissions.status;
-  console.log('[LEONA Notifications] Current permission status', finalStatus);
 
   if (finalStatus !== 'granted') {
     const requested = await Notifications.requestPermissionsAsync();
     finalStatus = requested.status;
-    console.log('[LEONA Notifications] Requested permission status', finalStatus);
   }
 
   if (finalStatus !== 'granted') {
@@ -69,112 +65,38 @@ export async function initNotifications() {
     return null;
   }
 
-  return await getDevicePushToken();
+  return await getExpoPushToken();
 }
 
-export async function getDevicePushToken() {
+export async function getExpoPushToken() {
   if (!Notifications) {
     return null;
   }
 
   try {
-    if (Platform.OS !== 'ios') {
-      console.log('[LEONA Notifications] Native push token skipped for non-iOS platform', Platform.OS);
+    const projectId = getProjectId();
+    if (!projectId) {
+      console.warn('[LEONA Notifications] Expo projectId unavailable; push token skipped');
       return null;
     }
 
-    const token = await Notifications.getDevicePushTokenAsync();
+    const token = await Notifications.getExpoPushTokenAsync({ projectId });
     const tokenData = typeof token?.data === 'string' ? token.data : null;
     if (tokenData) {
-      console.log('[LEONA Notifications] Native iOS push token acquired');
+      console.log('[LEONA Notifications] Expo push token acquired', {
+        platform: Platform.OS,
+        projectId,
+      });
     }
     return tokenData;
   } catch (error) {
-    console.warn('[LEONA Notifications] Native push token fetch failed:', error.message);
+    console.warn('[LEONA Notifications] Expo push token fetch failed:', error.message);
     return null;
   }
-}
-
-function buildRealtimeNotification(update) {
-  const event = update?.event || {};
-  const eventId = event.id || event.event_id || event.title;
-  const key = `${update?.type || 'event'}:${eventId}`;
-
-  if (!eventId || deliveredKeys.has(key)) {
-    return null;
-  }
-
-  if (!['alert', 'aoi_alert', 'new', 'update'].includes(update?.type)) {
-    return null;
-  }
-
-  if (update.type === 'new' || update.type === 'update') {
-    const severity = event.severity?.toLowerCase?.();
-    if (!['critical', 'high'].includes(severity)) {
-      return null;
-    }
-  }
-
-  deliveredKeys.add(key);
-
-  const title =
-    update.type === 'aoi_alert'
-      ? 'AOI Alert'
-      : update.type === 'alert'
-        ? 'Critical Alert'
-        : 'Global Event Update';
-  const bodyParts = [event.title || 'Event update'];
-  if (event.location) {
-    bodyParts.push(event.location);
-  }
-
-  return {
-    title,
-    body: bodyParts.join(' · '),
-    data: {
-      notificationType: update.type,
-      event,
-    },
-  };
-}
-
-export async function notifyRealtimeUpdate(update) {
-  if (!Notifications) {
-    console.log('[LEONA Notifications] Skipping schedule, notifications unavailable');
-    return;
-  }
-
-  const notification = buildRealtimeNotification(update);
-  if (!notification) {
-    console.log('[LEONA Notifications] Update did not qualify for notification', {
-      type: update?.type,
-      eventId: update?.event?.id || update?.event?.event_id || null,
-      severity: update?.event?.severity || null,
-    });
-    return;
-  }
-
-  await initNotifications();
-  console.log('[LEONA Notifications] Scheduling notification', {
-    title: notification.title,
-    body: notification.body,
-    eventId: notification.data?.event?.id || notification.data?.event?.event_id || null,
-  });
-
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: notification.title,
-      body: notification.body,
-      data: notification.data,
-      sound: 'default',
-    },
-    trigger: null,
-  });
 }
 
 export function addNotificationResponseListener(listener) {
   if (!Notifications?.addNotificationResponseReceivedListener) {
-    console.log('[LEONA Notifications] Response listener unavailable');
     return () => {};
   }
 
@@ -183,11 +105,9 @@ export function addNotificationResponseListener(listener) {
   }
 
   responseSubscription = Notifications.addNotificationResponseReceivedListener(listener);
-  console.log('[LEONA Notifications] Response listener attached');
   return () => {
     responseSubscription?.remove?.();
     responseSubscription = null;
-    console.log('[LEONA Notifications] Response listener removed');
   };
 }
 
@@ -199,6 +119,7 @@ export async function consumeLastNotificationResponse() {
   const response = await Notifications.getLastNotificationResponseAsync();
   const identifier =
     response?.notification?.request?.identifier
+    || response?.notification?.request?.content?.data?.alert_id
     || response?.notification?.request?.content?.data?.event?.id
     || response?.notification?.request?.content?.data?.event?.event_id
     || null;

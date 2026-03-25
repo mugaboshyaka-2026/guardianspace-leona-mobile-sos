@@ -714,28 +714,42 @@ export function useWorldEvents(refreshIntervalMs = null) {
 /**
  * useAlerts — returns active alerts.
  */
-export function useAlerts() {
+export function useAlerts(enabled = true) {
   const [alerts, setAlerts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [meta, setMeta] = useState({ total: 0, unread: 0 });
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (params = {}) => {
+    if (!enabled) {
+      setAlerts([]);
+      setMeta({ total: 0, unread: 0 });
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
+    setError(null);
     try {
-      const data = await fetchAlerts();
-      setAlerts(data);
+      const data = await fetchAlerts(params);
+      setAlerts(data?.alerts || []);
+      setMeta({
+        total: Number(data?.total || 0),
+        unread: Number(data?.unread || 0),
+      });
     } catch (err) {
       console.warn('[useAlerts] API failed:', err.message);
       setError(err);
       setAlerts([]);
+      setMeta({ total: 0, unread: 0 });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  return { alerts, loading, error, refresh };
+  return { alerts, meta, loading, error, refresh };
 }
 
 /**

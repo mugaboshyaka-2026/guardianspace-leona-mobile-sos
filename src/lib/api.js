@@ -17,6 +17,32 @@ export function isTimeoutError(error) {
   return error?.message === 'Request timed out';
 }
 
+export function normalizeAlertToEvent(alert = {}) {
+  const lat = parseFloat(alert.event_lat ?? alert.lat ?? alert.latitude ?? '');
+  const lng = parseFloat(alert.event_lng ?? alert.lng ?? alert.longitude ?? '');
+  const normalizedType = normalizeType(alert.event_category || alert.category || alert.type || '');
+  const baseId = alert.event_id || alert.id || `${normalizedType}:${alert.created_at || Date.now()}`;
+
+  return {
+    ...alert,
+    id: String(baseId),
+    alert_id: alert.id ? String(alert.id) : null,
+    event_id: alert.event_id ? String(alert.event_id) : null,
+    type: normalizedType,
+    category: alert.event_category || alert.category || normalizedType,
+    title: alert.event_title || alert.title || 'Alert',
+    body: alert.body || '',
+    description: alert.body || alert.description || '',
+    location: alert.location || '',
+    lat: Number.isNaN(lat) ? 0 : lat,
+    lng: Number.isNaN(lng) ? 0 : lng,
+    severity: normalizeSeverity(alert.severity || 'high'),
+    created_at: alert.created_at || alert.sent_at || new Date().toISOString(),
+    updated_at: alert.sent_at || alert.updated_at || alert.created_at || new Date().toISOString(),
+    source: alert.channel || alert.type || 'alert',
+  };
+}
+
 /** Base fetch wrapper with auth, timeout, and error handling. */
 async function request(path, options = {}) {
   const { method = 'GET', body, params, timeout = 30000, headers: customHeaders } = options;
@@ -240,9 +266,8 @@ export async function getLeonaBrief(context) {
 
 // ── Alerts ──
 
-export async function fetchAlerts() {
-  const data = await request('/api/alerts');
-  return data.alerts || [];
+export async function fetchAlerts(params = {}) {
+  return await request('/api/alerts', { params });
 }
 
 export async function markAlertRead(alertId) {
