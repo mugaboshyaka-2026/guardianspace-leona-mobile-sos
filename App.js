@@ -9,7 +9,7 @@ import { colors } from './src/theme';
 import { useAOIs, useProfile, resetEventCache } from './src/hooks/useEvents';
 import BrandedLoader from './src/components/BrandedLoader';
 import { onEventUpdate } from './src/lib/realtime';
-import { addNotificationResponseListener, consumeLastNotificationResponse, getExpoPushToken, initNotifications, notifyRealtimeUpdate } from './src/lib/notifications';
+import { addNotificationResponseListener, consumeLastNotificationResponse, getDevicePushToken, initNotifications, notifyRealtimeUpdate } from './src/lib/notifications';
 import { syncPushToken } from './src/lib/pushRegistration';
 import { markAlertViewed } from './src/lib/viewedAlerts';
 import { getStoredSettingsPreferences } from './src/lib/settingsPreferences';
@@ -292,7 +292,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
     initNotifications().catch((err) => {
       console.warn('[LEONA Notifications] Init failed:', err.message);
     });
-    getExpoPushToken()
+    getDevicePushToken()
       .then((token) => {
         if (!token) {
           return null;

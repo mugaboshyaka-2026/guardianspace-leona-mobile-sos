@@ -69,34 +69,28 @@ export async function initNotifications() {
     return null;
   }
 
-  try {
-    const projectId = getProjectId();
-    if (projectId) {
-      const token = await Notifications.getExpoPushTokenAsync({ projectId });
-      console.log('[LEONA Notifications] Expo push token', token.data);
-      return token.data;
-    }
-  } catch (error) {
-    console.warn('[LEONA Notifications] Push token fetch failed:', error.message);
-  }
-
-  return null;
+  return await getDevicePushToken();
 }
 
-export async function getExpoPushToken() {
+export async function getDevicePushToken() {
   if (!Notifications) {
     return null;
   }
 
   try {
-    const projectId = getProjectId();
-    if (!projectId) {
+    if (Platform.OS !== 'ios') {
+      console.log('[LEONA Notifications] Native push token skipped for non-iOS platform', Platform.OS);
       return null;
     }
-    const token = await Notifications.getExpoPushTokenAsync({ projectId });
-    return token?.data || null;
+
+    const token = await Notifications.getDevicePushTokenAsync();
+    const tokenData = typeof token?.data === 'string' ? token.data : null;
+    if (tokenData) {
+      console.log('[LEONA Notifications] Native iOS push token acquired');
+    }
+    return tokenData;
   } catch (error) {
-    console.warn('[LEONA Notifications] Explicit push token fetch failed:', error.message);
+    console.warn('[LEONA Notifications] Native push token fetch failed:', error.message);
     return null;
   }
 }
