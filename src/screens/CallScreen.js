@@ -13,7 +13,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { colors, spacing } from '../theme';
 import {
   endTavusConversation,
-  getTavusBrief,
+  getTavusConversation,
   startTavusConversation,
   syncTavusPersona,
 } from '../lib/api';
@@ -186,7 +186,7 @@ const CallScreen = ({ navigation, route }) => {
         console.warn('[Tavus] Persona sync failed:', err.message);
       });
 
-      const active = await getTavusBrief().catch((err) => {
+      const active = await getTavusConversation().catch((err) => {
         console.warn('[Tavus] Get active conversation failed:', err.message);
         return null;
       });

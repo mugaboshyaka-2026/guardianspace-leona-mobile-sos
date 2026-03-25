@@ -19,7 +19,7 @@ export function isTimeoutError(error) {
 
 /** Base fetch wrapper with auth, timeout, and error handling. */
 async function request(path, options = {}) {
-  const { method = 'GET', body, params, timeout = 30000 } = options;
+  const { method = 'GET', body, params, timeout = 30000, headers: customHeaders } = options;
 
   // Build URL with query params
   let url = `${API_URL}${path}`;
@@ -33,7 +33,10 @@ async function request(path, options = {}) {
   }
 
   // Build headers
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = { ...(customHeaders || {}) };
+  if (body !== undefined && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
   let hasAuthHeader = false;
   let token = null;
   if (_getToken) {
@@ -64,7 +67,11 @@ async function request(path, options = {}) {
     const res = await fetch(url, {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined,
+      body: body !== undefined
+        ? headers['Content-Type'] === 'application/json'
+          ? JSON.stringify(body)
+          : body
+        : undefined,
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -88,7 +95,17 @@ async function request(path, options = {}) {
       err.status = res.status;
       throw err;
     }
-    return await res.json();
+    if (res.status === 204) {
+      return null;
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      return await res.json();
+    }
+
+    const text = await res.text();
+    return text ? { raw: text } : null;
   } catch (e) {
     clearTimeout(timer);
     if (e.name === 'AbortError') {
@@ -228,10 +245,44 @@ export async function fetchAlerts() {
   return data.alerts || [];
 }
 
+export async function markAlertRead(alertId) {
+  return await request(`/api/alerts/${alertId}/read`, {
+    method: 'PATCH',
+  });
+}
+
+export async function markAllAlertsRead() {
+  return await request('/api/alerts/read-all', {
+    method: 'PATCH',
+  });
+}
+
 export async function registerDevicePushToken(payload) {
-  return await request('/api/notifications/devices', {
+  return await request('/api/users/me/devices', {
     method: 'POST',
     body: payload,
+  });
+}
+
+export async function fetchNotificationPreferences() {
+  return await request('/api/users/me/notifications/preferences');
+}
+
+export async function updateNotificationPreferences(patch) {
+  return await request('/api/users/me/notifications/preferences', {
+    method: 'PATCH',
+    body: patch,
+  });
+}
+
+export async function fetchRegisteredDevices() {
+  const data = await request('/api/users/me/devices');
+  return data?.devices || [];
+}
+
+export async function unregisterDevice(deviceId) {
+  return await request(`/api/users/me/devices/${deviceId}`, {
+    method: 'DELETE',
   });
 }
 
@@ -267,6 +318,10 @@ export async function updateAOI(id, patch) {
 
 export async function deleteAOI(id) {
   return await request(`/api/users/me/aois/${id}`, { method: 'DELETE' });
+}
+
+export async function setPrimaryAOI(id) {
+  return await request(`/api/users/me/aois/${id}/primary`, { method: 'POST' });
 }
 
 // ── Favorites ──

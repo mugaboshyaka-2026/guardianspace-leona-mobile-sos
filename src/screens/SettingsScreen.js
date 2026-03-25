@@ -1,47 +1,67 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
+  ActivityIndicator,
+  Alert,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Switch,
+  Text,
+  TextInput,
   TouchableOpacity,
-  SafeAreaView,
+  View,
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import { AppContext } from '../../App';
 import { PRODUCT_CONFIGS, getProductConfig } from '../lib/products';
 import { useAOIs } from '../hooks/useEvents';
-import { updateUserProfile } from '../lib/api';
+import {
+  addAOI,
+  deleteAOI,
+  fetchNotificationPreferences,
+  setPrimaryAOI,
+  updateAOI,
+  updateNotificationPreferences,
+  updateUserProfile,
+} from '../lib/api';
 import { mergeStoredSettingsPreferences } from '../lib/settingsPreferences';
 import { setCurrentDataPreferences } from '../lib/dataPreferences';
 import { clearOfflineDataset } from '../lib/offlineCache';
+import { getLocationMetadata } from '../lib/locality';
+import { AOI_PRESETS } from '../lib/aoiPresets';
 
 const MAP_TYPE_OPTIONS = ['2D', '3D', 'Satellite'];
 const REFRESH_INTERVAL_OPTIONS = ['30s', '1m', '5m', '15m'];
+
+function formatAoiName(aoi) {
+  return aoi?.name || aoi?.city || aoi?.location_name || aoi?.location || 'Unnamed AOI';
+}
 
 const SettingsScreen = ({ navigation }) => {
   const { userConfig, setUserConfig } = useContext(AppContext);
   const productConfig = getProductConfig(userConfig?.product);
   const plans = Object.values(PRODUCT_CONFIGS);
-  const { aois } = useAOIs();
-  const currentAois = aois.map((aoi) => ({
-    id: aoi?.id,
-    name: aoi?.name || aoi?.location_name || aoi?.location || String(aoi),
-  })).filter((aoi) => aoi.name);
-  const notifications = useMemo(() => (
-    userConfig?.pushNotifications ?? userConfig?.preferences?.push_notifications ?? true
-  ), [userConfig?.preferences?.push_notifications, userConfig?.pushNotifications]);
-  const criticalOnly = useMemo(() => Boolean(userConfig?.criticalOnly), [userConfig?.criticalOnly]);
-  const soundVibration = useMemo(() => (
-    userConfig?.soundVibration ?? userConfig?.preferences?.sound_vibration ?? true
-  ), [userConfig?.preferences?.sound_vibration, userConfig?.soundVibration]);
-  const showMarkers = useMemo(() => (
-    userConfig?.showEventMarkers ?? userConfig?.preferences?.show_event_markers ?? true
-  ), [userConfig?.preferences?.show_event_markers, userConfig?.showEventMarkers]);
-  const showRiskZones = useMemo(() => (
-    userConfig?.showRiskZones ?? userConfig?.preferences?.show_risk_zones ?? true
-  ), [userConfig?.preferences?.show_risk_zones, userConfig?.showRiskZones]);
+  const { aois, loading: aoisLoading, refresh: refreshAois } = useAOIs();
+  const notifications = useMemo(
+    () => userConfig?.pushNotifications ?? userConfig?.preferences?.push_notifications ?? true,
+    [userConfig?.preferences?.push_notifications, userConfig?.pushNotifications]
+  );
+  const criticalOnly = useMemo(
+    () => Boolean(userConfig?.criticalOnly),
+    [userConfig?.criticalOnly]
+  );
+  const soundVibration = useMemo(
+    () => userConfig?.soundVibration ?? userConfig?.preferences?.sound_vibration ?? true,
+    [userConfig?.preferences?.sound_vibration, userConfig?.soundVibration]
+  );
+  const showMarkers = useMemo(
+    () => userConfig?.showEventMarkers ?? userConfig?.preferences?.show_event_markers ?? true,
+    [userConfig?.preferences?.show_event_markers, userConfig?.showEventMarkers]
+  );
+  const showRiskZones = useMemo(
+    () => userConfig?.showRiskZones ?? userConfig?.preferences?.show_risk_zones ?? true,
+    [userConfig?.preferences?.show_risk_zones, userConfig?.showRiskZones]
+  );
   const defaultMapType = useMemo(() => {
     const configuredMapType = userConfig?.defaultMapType ?? userConfig?.preferences?.default_map_type ?? '2D';
     return MAP_TYPE_OPTIONS.includes(configuredMapType) ? configuredMapType : '2D';
@@ -66,6 +86,15 @@ const SettingsScreen = ({ navigation }) => {
   const [darkMode, setDarkMode] = useState(true);
   const [mapType, setMapType] = useState(defaultMapType);
   const [refreshInterval, setRefreshInterval] = useState(configuredRefreshInterval);
+  const [prefsLoading, setPrefsLoading] = useState(true);
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [notificationPrefs, setNotificationPrefs] = useState(null);
+  const [aoiLocationInput, setAoiLocationInput] = useState('');
+  const [aoiLatInput, setAoiLatInput] = useState('');
+  const [aoiLngInput, setAoiLngInput] = useState('');
+  const [aoiRadiusInput, setAoiRadiusInput] = useState('500');
+  const [aoiBusyId, setAoiBusyId] = useState(null);
+  const [addingAoi, setAddingAoi] = useState(false);
 
   useEffect(() => {
     setMapType(defaultMapType);
@@ -83,14 +112,47 @@ const SettingsScreen = ({ navigation }) => {
     setDataSaverMode(configuredDataSaverMode);
   }, [configuredDataSaverMode]);
 
-  const handlePlanChange = (planId) => {
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchNotificationPreferences()
+      .then((prefs) => {
+        if (cancelled) {
+          return;
+        }
+        setNotificationPrefs(prefs || {});
+        setEmailDigest(Boolean(prefs?.email));
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('[Settings] Notification preference fetch failed:', err.message);
+          setNotificationPrefs(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPrefsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const syncUserConfigPreferences = (patch, topLevelPatch = {}) => {
     setUserConfig((prev) => ({
       ...(prev || {}),
-      product: planId,
+      ...topLevelPatch,
+      preferences: {
+        ...(prev?.preferences || {}),
+        ...patch,
+      },
     }));
   };
 
-  const persistNotificationPreferences = async (patch) => {
+  const persistLocalPreferencePatch = async (patch, topLevelPatch = {}) => {
+    syncUserConfigPreferences(patch, topLevelPatch);
     await mergeStoredSettingsPreferences(patch).catch((err) => {
       console.warn('[Settings] Local preference persist failed:', err.message);
     });
@@ -99,62 +161,77 @@ const SettingsScreen = ({ navigation }) => {
     });
   };
 
-  const handleNotificationToggle = (key, storageKey, value) => {
+  const persistServerNotificationPrefs = async (patch, localPatch = {}, topLevelPatch = {}) => {
+    setSavingPrefs(true);
+    try {
+      const nextPrefs = await updateNotificationPreferences(patch);
+      setNotificationPrefs(nextPrefs || {});
+      await persistLocalPreferencePatch(localPatch, topLevelPatch);
+      return nextPrefs;
+    } catch (err) {
+      Alert.alert('Unable to save', err?.message || 'Notification settings could not be updated.');
+      throw err;
+    } finally {
+      setSavingPrefs(false);
+    }
+  };
+
+  const handlePlanChange = (planId) => {
     setUserConfig((prev) => ({
       ...(prev || {}),
-      [key]: value,
-      preferences: {
-        ...(prev?.preferences || {}),
-        [storageKey]: value,
-      },
+      product: planId,
     }));
-    persistNotificationPreferences({ [storageKey]: value });
   };
 
-  const handlePushNotificationsToggle = (value) => {
-    handleNotificationToggle('pushNotifications', 'push_notifications', value);
+  const handlePushNotificationsToggle = async (value) => {
+    await persistServerNotificationPrefs(
+      { push: value },
+      { push_notifications: value },
+      { pushNotifications: value }
+    ).catch(() => {});
   };
 
-  const handleCriticalOnlyToggle = (value) => {
-    handleNotificationToggle('criticalOnly', 'critical_only', value);
+  const handleCriticalOnlyToggle = async (value) => {
+    await persistServerNotificationPrefs(
+      { min_severity: value ? 'high' : 'monitoring' },
+      { critical_only: value },
+      { criticalOnly: value }
+    ).catch(() => {});
   };
 
-  const handleSoundVibrationToggle = (value) => {
-    handleNotificationToggle('soundVibration', 'sound_vibration', value);
+  const handleSoundVibrationToggle = async (value) => {
+    await persistServerNotificationPrefs(
+      { alert_sound: value },
+      { sound_vibration: value },
+      { soundVibration: value }
+    ).catch(() => {});
   };
 
-  const handleShowMarkersToggle = (value) => {
-    handleNotificationToggle('showEventMarkers', 'show_event_markers', value);
+  const handleEmailDigestToggle = async (value) => {
+    setEmailDigest(value);
+    await persistServerNotificationPrefs({ email: value }).catch(() => {
+      setEmailDigest(!value);
+    });
   };
 
-  const handleShowRiskZonesToggle = (value) => {
-    handleNotificationToggle('showRiskZones', 'show_risk_zones', value);
+  const handlePreferenceToggle = (key, storageKey, value) => {
+    persistLocalPreferencePatch({ [storageKey]: value }, { [key]: value });
   };
 
   const handleMapTypeChange = (value) => {
     setMapType(value);
-    setUserConfig((prev) => ({
-      ...(prev || {}),
-      defaultMapType: value,
-      preferences: {
-        ...(prev?.preferences || {}),
-        default_map_type: value,
-      },
-    }));
-    persistNotificationPreferences({ default_map_type: value });
+    persistLocalPreferencePatch(
+      { default_map_type: value },
+      { defaultMapType: value }
+    );
   };
 
   const handleRefreshIntervalChange = (value) => {
     setRefreshInterval(value);
-    setUserConfig((prev) => ({
-      ...(prev || {}),
-      refreshInterval: value,
-      preferences: {
-        ...(prev?.preferences || {}),
-        refresh_interval: value,
-      },
-    }));
-    persistNotificationPreferences({ refresh_interval: value });
+    persistLocalPreferencePatch(
+      { refresh_interval: value },
+      { refreshInterval: value }
+    );
   };
 
   const handleOfflineCacheToggle = (value) => {
@@ -163,15 +240,10 @@ const SettingsScreen = ({ navigation }) => {
       offline_cache: value,
       data_saver_mode: dataSaverMode,
     });
-    setUserConfig((prev) => ({
-      ...(prev || {}),
-      offlineCache: value,
-      preferences: {
-        ...(prev?.preferences || {}),
-        offline_cache: value,
-      },
-    }));
-    persistNotificationPreferences({ offline_cache: value });
+    persistLocalPreferencePatch(
+      { offline_cache: value },
+      { offlineCache: value }
+    );
     if (!value) {
       clearOfflineDataset('myEvents').catch(() => {});
       clearOfflineDataset('worldEvents').catch(() => {});
@@ -184,16 +256,128 @@ const SettingsScreen = ({ navigation }) => {
       offline_cache: offlineCache,
       data_saver_mode: value,
     });
+    persistLocalPreferencePatch(
+      { data_saver_mode: value },
+      { dataSaverMode: value }
+    );
+  };
+
+  const syncAoisIntoUserConfig = (nextAois) => {
+    const names = nextAois.map((aoi) => formatAoiName(aoi)).filter(Boolean);
+    const primaryAoi = nextAois.find((aoi) => aoi?.is_primary) || nextAois[0] || null;
+
     setUserConfig((prev) => ({
       ...(prev || {}),
-      dataSaverMode: value,
-      preferences: {
-        ...(prev?.preferences || {}),
-        data_saver_mode: value,
-      },
+      aois: names,
+      location: primaryAoi ? formatAoiName(primaryAoi) : prev?.location,
+      radius: primaryAoi?.radius_km ?? prev?.radius ?? 0,
     }));
-    persistNotificationPreferences({ data_saver_mode: value });
   };
+
+  const handleRefreshAois = async () => {
+    const refreshed = await refreshAois();
+    if (Array.isArray(refreshed?.aois)) {
+      syncAoisIntoUserConfig(refreshed.aois);
+    } else {
+      syncAoisIntoUserConfig(aois);
+    }
+  };
+
+  const handleSetPrimary = async (aoiId) => {
+    setAoiBusyId(aoiId);
+    try {
+      await setPrimaryAOI(aoiId);
+      await handleRefreshAois();
+    } catch (err) {
+      Alert.alert('Unable to set primary AOI', err?.message || 'Please try again.');
+    } finally {
+      setAoiBusyId(null);
+    }
+  };
+
+  const handleAdjustRadius = async (aoi, delta) => {
+    const nextRadius = Math.max(10, Number(aoi?.radius_km || 0) + delta);
+    setAoiBusyId(aoi.id);
+    try {
+      await updateAOI(aoi.id, { radius_km: nextRadius });
+      await handleRefreshAois();
+    } catch (err) {
+      Alert.alert('Unable to update AOI', err?.message || 'Please try again.');
+    } finally {
+      setAoiBusyId(null);
+    }
+  };
+
+  const handleDeleteAoi = (aoi) => {
+    Alert.alert(
+      'Delete AOI',
+      `Remove ${formatAoiName(aoi)} from your monitored areas?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setAoiBusyId(aoi.id);
+            try {
+              await deleteAOI(aoi.id);
+              await handleRefreshAois();
+            } catch (err) {
+              Alert.alert('Unable to delete AOI', err?.message || 'Please try again.');
+            } finally {
+              setAoiBusyId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleAddAoi = async () => {
+    const location = aoiLocationInput.trim();
+    const lat = Number(aoiLatInput);
+    const lng = Number(aoiLngInput);
+    const radiusKm = Math.max(10, Number(aoiRadiusInput) || 0);
+    const metadata = getLocationMetadata(location);
+
+    if (!location || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      Alert.alert('Coordinates required', 'Enter an AOI name plus valid latitude and longitude values from a backend-aligned source.');
+      return;
+    }
+
+    setAddingAoi(true);
+    try {
+      await addAOI({
+        name: location,
+        city: metadata.city || location,
+        country_code: metadata.country_code || '',
+        lat,
+        lng,
+        radius_km: radiusKm,
+        is_primary: aois.length === 0,
+        boundary_geojson: null,
+      });
+      setAoiLocationInput('');
+      setAoiLatInput('');
+      setAoiLngInput('');
+      setAoiRadiusInput('500');
+      await handleRefreshAois();
+    } catch (err) {
+      Alert.alert('Unable to add AOI', err?.message || 'Please try again.');
+    } finally {
+      setAddingAoi(false);
+    }
+  };
+
+  const applyPresetAoi = (preset) => {
+    setAoiLocationInput(preset.name);
+    setAoiLatInput(String(preset.lat));
+    setAoiLngInput(String(preset.lng));
+  };
+
+  const notificationSummary = notificationPrefs
+    ? `Min severity ${notificationPrefs.min_severity || 'monitoring'} · Push ${notificationPrefs.push ? 'on' : 'off'} · Email ${notificationPrefs.email ? 'on' : 'off'}`
+    : 'Notification settings are using local defaults.';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -212,10 +396,19 @@ const SettingsScreen = ({ navigation }) => {
       >
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>NOTIFICATIONS</Text>
+          {(prefsLoading || savingPrefs) && (
+            <View style={styles.inlineStatus}>
+              <ActivityIndicator color={colors.blue} size="small" />
+              <Text style={styles.inlineStatusText}>
+                {prefsLoading ? 'Loading server preferences…' : 'Saving preferences…'}
+              </Text>
+            </View>
+          )}
+          {!prefsLoading && <Text style={styles.sectionNote}>{notificationSummary}</Text>}
           <SettingRow label="Push Notifications" value={notifications} onToggle={handlePushNotificationsToggle} />
           <SettingRow label="Critical Alerts Only" value={criticalOnly} onToggle={handleCriticalOnlyToggle} />
           <SettingRow label="Sound & Vibration" value={soundVibration} onToggle={handleSoundVibrationToggle} />
-          <SettingRow label="Email Digest" value={emailDigest} onToggle={setEmailDigest} />
+          <SettingRow label="Email Digest" value={emailDigest} onToggle={handleEmailDigestToggle} />
         </View>
 
         <View style={styles.section}>
@@ -226,8 +419,8 @@ const SettingsScreen = ({ navigation }) => {
             options={MAP_TYPE_OPTIONS}
             onSelect={handleMapTypeChange}
           />
-          <SettingRow label="Show Event Markers" value={showMarkers} onToggle={handleShowMarkersToggle} />
-          <SettingRow label="Show Risk Zones" value={showRiskZones} onToggle={handleShowRiskZonesToggle} />
+          <SettingRow label="Show Event Markers" value={showMarkers} onToggle={(value) => handlePreferenceToggle('showEventMarkers', 'show_event_markers', value)} />
+          <SettingRow label="Show Risk Zones" value={showRiskZones} onToggle={(value) => handlePreferenceToggle('showRiskZones', 'show_risk_zones', value)} />
           <SelectorRow
             label="Auto-Refresh Interval"
             value={refreshInterval}
@@ -316,28 +509,126 @@ const SettingsScreen = ({ navigation }) => {
           <Text style={styles.sectionHeader}>AREAS OF INTEREST</Text>
           <View style={styles.planCard}>
             <View style={styles.settingLabel}>
-              <Text style={styles.settingText}>Current AOIs</Text>
-              <Text style={styles.subtitle}>
-                AOI editing is not available in Settings right now. Use this list to review what is active.
-              </Text>
+              <Text style={styles.settingText}>Manage AOIs</Text>
+              <Text style={styles.subtitle}>Backed by `/api/users/me/aois`. New AOIs require explicit coordinates instead of client-only preset cities.</Text>
             </View>
-            <View style={styles.planOptions}>
-              {currentAois.length > 0 ? (
-                currentAois.map((aoi, idx) => (
-                  <View key={`${aoi.name}-${idx}`} style={[styles.planPill, { borderColor: colors.blue }]}>
-                    <Text style={[styles.planPillText, { color: colors.blue }]}>{aoi.name}</Text>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.subtitle}>No AOIs are configured on this account.</Text>
-              )}
+
+            <View style={styles.aoiComposer}>
+              <TextInput
+                value={aoiLocationInput}
+                onChangeText={setAoiLocationInput}
+                placeholder="AOI name"
+                placeholderTextColor={colors.textDim}
+                style={styles.aoiInput}
+              />
+              <TextInput
+                value={aoiLatInput}
+                onChangeText={setAoiLatInput}
+                placeholder="Latitude"
+                placeholderTextColor={colors.textDim}
+                style={[styles.aoiInput, styles.aoiCoordinateInput]}
+                keyboardType="numeric"
+              />
+              <TextInput
+                value={aoiLngInput}
+                onChangeText={setAoiLngInput}
+                placeholder="Longitude"
+                placeholderTextColor={colors.textDim}
+                style={[styles.aoiInput, styles.aoiCoordinateInput]}
+                keyboardType="numeric"
+              />
+              <TextInput
+                value={aoiRadiusInput}
+                onChangeText={setAoiRadiusInput}
+                placeholder="Radius km"
+                placeholderTextColor={colors.textDim}
+                style={[styles.aoiInput, styles.aoiRadiusInput]}
+                keyboardType="numeric"
+              />
+              <TouchableOpacity
+                style={[styles.aoiAddButton, addingAoi && styles.aoiActionDisabled]}
+                onPress={handleAddAoi}
+                disabled={addingAoi}
+              >
+                <Text style={styles.aoiAddButtonText}>{addingAoi ? 'ADDING' : 'ADD'}</Text>
+              </TouchableOpacity>
             </View>
-            <View style={styles.aoiHelpBox}>
-              <Text style={styles.aoiHelpTitle}>AOI changes</Text>
-              <Text style={styles.aoiHelpText}>
-                AOI add and remove actions have been disabled in Settings. Use the setup flow to change active areas of interest.
-              </Text>
+
+            <Text style={styles.subtitle}>Quick presets autofill the fields only. Backend AOI data remains the source of truth.</Text>
+            <View style={styles.presetRow}>
+              {AOI_PRESETS.map((preset) => (
+                <TouchableOpacity
+                  key={preset.name}
+                  style={styles.presetChip}
+                  onPress={() => applyPresetAoi(preset)}
+                >
+                  <Text style={styles.presetChipText}>{preset.name}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
+
+            {aoisLoading ? (
+              <ActivityIndicator color={colors.blue} style={styles.loadingIndicator} />
+            ) : aois.length > 0 ? (
+              <View style={styles.aoiList}>
+                {aois.map((aoi) => {
+                  const busy = aoiBusyId === aoi.id;
+                  return (
+                    <View key={aoi.id} style={styles.aoiCard}>
+                      <View style={styles.aoiCardHeader}>
+                        <View>
+                          <Text style={styles.aoiName}>{formatAoiName(aoi)}</Text>
+                          <Text style={styles.aoiMeta}>
+                            {(aoi?.country_code || '').toUpperCase() || 'N/A'} · {Number(aoi?.radius_km || 0)} km
+                          </Text>
+                        </View>
+                        {aoi?.is_primary ? (
+                          <View style={styles.primaryBadge}>
+                            <Text style={styles.primaryBadgeText}>PRIMARY</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <View style={styles.aoiActions}>
+                        <TouchableOpacity
+                          style={styles.aoiAction}
+                          disabled={busy}
+                          onPress={() => handleAdjustRadius(aoi, -50)}
+                        >
+                          <Text style={styles.aoiActionText}>-50km</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.aoiAction}
+                          disabled={busy}
+                          onPress={() => handleAdjustRadius(aoi, 50)}
+                        >
+                          <Text style={styles.aoiActionText}>+50km</Text>
+                        </TouchableOpacity>
+                        {!aoi?.is_primary && (
+                          <TouchableOpacity
+                            style={styles.aoiAction}
+                            disabled={busy}
+                            onPress={() => handleSetPrimary(aoi.id)}
+                          >
+                            <Text style={styles.aoiActionText}>Set primary</Text>
+                          </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                          style={[styles.aoiAction, styles.aoiDeleteAction]}
+                          disabled={busy}
+                          onPress={() => handleDeleteAoi(aoi)}
+                        >
+                          <Text style={[styles.aoiActionText, styles.aoiDeleteActionText]}>
+                            {busy ? 'Working…' : 'Delete'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={styles.subtitle}>No AOIs are configured on this account.</Text>
+            )}
           </View>
         </View>
 
@@ -346,7 +637,7 @@ const SettingsScreen = ({ navigation }) => {
           <TouchableOpacity style={styles.settingRow} onPress={() => navigation.navigate('DataSources')}>
             <View style={styles.settingLabel}>
               <Text style={styles.settingText}>Manage Data Feeds</Text>
-              <Text style={styles.subtitle}>47 active feeds · 21 event types</Text>
+              <Text style={styles.subtitle}>Open the live backend datasource inventory.</Text>
             </View>
             <View style={styles.sourcesStatus}>
               <View style={styles.sourcesStatusDot} />
@@ -354,34 +645,6 @@ const SettingsScreen = ({ navigation }) => {
               <Text style={styles.chevron}>›</Text>
             </View>
           </TouchableOpacity>
-          <View style={styles.settingRow}>
-            <View style={styles.settingLabel}>
-              <Text style={styles.settingText}>Satellite Imagery</Text>
-              <Text style={styles.subtitle}>8 feeds · Sentinel, GOES, VIIRS, Planet</Text>
-            </View>
-            <Text style={styles.settingValue}>Active</Text>
-          </View>
-          <View style={styles.settingRow}>
-            <View style={styles.settingLabel}>
-              <Text style={styles.settingText}>Meteorological</Text>
-              <Text style={styles.subtitle}>7 feeds · ECMWF, NOAA, JMA, BOM</Text>
-            </View>
-            <Text style={styles.settingValue}>Active</Text>
-          </View>
-          <View style={styles.settingRow}>
-            <View style={styles.settingLabel}>
-              <Text style={styles.settingText}>Seismic</Text>
-              <Text style={styles.subtitle}>5 feeds · USGS, EMSC, IRIS</Text>
-            </View>
-            <Text style={styles.settingValue}>Active</Text>
-          </View>
-          <View style={styles.settingRow}>
-            <View style={styles.settingLabel}>
-              <Text style={styles.settingText}>Humanitarian & Conflict</Text>
-              <Text style={styles.subtitle}>11 feeds · OCHA, ACLED, UNHCR, WFP</Text>
-            </View>
-            <Text style={styles.settingValue}>Active</Text>
-          </View>
         </View>
 
         <View style={styles.section}>
@@ -489,6 +752,22 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     marginBottom: spacing.md,
     marginTop: spacing.lg,
+  },
+  sectionNote: {
+    color: colors.textDim,
+    fontSize: 12,
+    marginBottom: spacing.sm,
+    lineHeight: 18,
+  },
+  inlineStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  inlineStatusText: {
+    color: colors.textSec,
+    fontSize: 12,
   },
   settingRow: {
     flexDirection: 'row',
@@ -602,21 +881,132 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  aoiHelpBox: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingTop: spacing.md,
-    gap: spacing.xs,
+  aoiComposer: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
   },
-  aoiHelpTitle: {
+  aoiInput: {
+    flex: 1,
+    minWidth: 160,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: 10,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
     color: colors.text,
-    fontSize: 13,
+    backgroundColor: colors.bg,
+  },
+  aoiRadiusInput: {
+    flexGrow: 0,
+    width: 96,
+  },
+  aoiCoordinateInput: {
+    flexGrow: 0,
+    width: 110,
+  },
+  aoiAddButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: 10,
+    backgroundColor: colors.blue,
+  },
+  aoiActionDisabled: {
+    opacity: 0.6,
+  },
+  aoiAddButtonText: {
+    color: colors.bg,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  aoiList: {
+    gap: spacing.md,
+  },
+  presetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  presetChip: {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: 999,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  presetChipText: {
+    color: colors.textSec,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  aoiCard: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: spacing.md,
+    backgroundColor: colors.bg,
+    gap: spacing.md,
+  },
+  aoiCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  aoiName: {
+    color: colors.text,
+    fontSize: 14,
     fontWeight: '700',
   },
-  aoiHelpText: {
-    color: colors.textDim,
+  aoiMeta: {
+    color: colors.textSec,
     fontSize: 12,
-    lineHeight: 18,
+    marginTop: spacing.xs,
+  },
+  primaryBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: 999,
+    backgroundColor: `${colors.blue}20`,
+    borderWidth: 1,
+    borderColor: `${colors.blue}55`,
+    alignSelf: 'flex-start',
+  },
+  primaryBadgeText: {
+    color: colors.blue,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  aoiActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  aoiAction: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.panel,
+  },
+  aoiActionText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  aoiDeleteAction: {
+    borderColor: 'rgba(244,67,54,0.35)',
+    backgroundColor: 'rgba(244,67,54,0.12)',
+  },
+  aoiDeleteActionText: {
+    color: colors.critical,
+  },
+  loadingIndicator: {
+    paddingVertical: spacing.lg,
   },
 });
 

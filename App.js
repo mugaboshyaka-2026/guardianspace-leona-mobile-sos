@@ -52,6 +52,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
   const { isLoaded, isSignedIn, authReady } = useAuth();
   const { aois, loading: aoisLoading } = useAOIs(isSignedIn && authReady);
   const { profile, loading: profileLoading } = useProfile(isSignedIn && authReady);
+  const [pendingNotificationResponse, setPendingNotificationResponse] = useState(null);
 
   useEffect(() => {
     if (isSignedIn) {
@@ -61,11 +62,24 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
 
   const handleNotificationOpen = React.useCallback(async (response) => {
     const event = response?.notification?.request?.content?.data?.event;
-    if (!event || !navigationRef.isReady()) {
+    const canNavigateToApp = navigationRef.isReady() && onboardingComplete;
+
+    if (!event) {
       console.log('[App] Notification tap ignored', {
         hasEvent: !!event,
         navReady: navigationRef.isReady(),
+        onboardingComplete,
       });
+      return;
+    }
+
+    if (!canNavigateToApp) {
+      console.log('[App] Notification tap queued', {
+        eventId: event.id || event.event_id || null,
+        navReady: navigationRef.isReady(),
+        onboardingComplete,
+      });
+      setPendingNotificationResponse(response);
       return;
     }
 
@@ -78,14 +92,24 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       title: event.title || null,
     });
     navigationRef.navigate('AlertsTab', {
-      screen: 'AlertsList',
+      screen: 'EventDetail',
       params: {
-        activeTab: 'MY',
-        viewedEventId: event.id || event.event_id || null,
+        event,
         notificationOpenedAt: Date.now(),
       },
     });
-  }, []);
+    setPendingNotificationResponse(null);
+  }, [onboardingComplete]);
+
+  useEffect(() => {
+    if (!pendingNotificationResponse || !navigationRef.isReady() || !onboardingComplete) {
+      return;
+    }
+
+    handleNotificationOpen(pendingNotificationResponse).catch((err) => {
+      console.warn('[App] Pending notification open handling failed:', err.message);
+    });
+  }, [handleNotificationOpen, onboardingComplete, pendingNotificationResponse]);
 
   useEffect(() => {
     let cancelled = false;
@@ -253,8 +277,14 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
     // no-op effect keeps auth state reactive for restored Clerk sessions
   }, [isLoaded, isSignedIn]);
 
+  const pushNotificationsEnabled = Boolean(
+    userConfig?.pushNotifications
+    ?? userConfig?.preferences?.push_notifications
+    ?? true
+  );
+
   useEffect(() => {
-    if (!isSignedIn) {
+    if (!isSignedIn || !pushNotificationsEnabled) {
       return;
     }
 
@@ -312,7 +342,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
       unsubRealtime?.();
       unsubNotifications?.();
     };
-  }, [handleNotificationOpen, isSignedIn]);
+  }, [handleNotificationOpen, isSignedIn, pushNotificationsEnabled]);
 
   if (!isLoaded || (isSignedIn && authReady && (aoisLoading || profileLoading))) {
     return <BrandedLoader />;

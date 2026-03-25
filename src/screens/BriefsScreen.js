@@ -14,6 +14,7 @@ import { useMyEvents, useWorldEvents, useAOIs, useLeonaBrief, useLeonaChat } fro
 import LeonaHeader from '../components/LeonaHeader';
 import { AppContext } from '../../App';
 import { filterEventsForConfig } from '../lib/locality';
+import { limitEventsForProduct } from '../lib/products';
 
 function extractBriefText(brief) {
   if (!brief) return '';

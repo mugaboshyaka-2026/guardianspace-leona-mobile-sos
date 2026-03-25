@@ -1,21 +1,27 @@
-import React, { useContext, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
+  ActivityIndicator,
+  Alert,
+  Platform,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
+  Text,
   TouchableOpacity,
-  SafeAreaView,
-  Platform,
+  View,
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import { useAuth } from '../lib/auth';
 import { useProfile } from '../hooks/useEvents';
 import { AppContext } from '../../App';
+import { fetchRegisteredDevices, unregisterDevice } from '../lib/api';
 
 const ProfileScreen = ({ navigation }) => {
   const [copyState, setCopyState] = useState('idle');
   const [copyMessage, setCopyMessage] = useState('');
+  const [devices, setDevices] = useState([]);
+  const [devicesLoading, setDevicesLoading] = useState(true);
+  const [busyDeviceId, setBusyDeviceId] = useState(null);
   const { user: clerkUser, signOut } = useAuth();
   const { profile: apiProfile } = useProfile();
   const { userConfig, handleLogout } = useContext(AppContext);
@@ -34,8 +40,15 @@ const ProfileScreen = ({ navigation }) => {
     if (parts.length === 0) return 'U';
     return parts.slice(0, 2).map((part) => part[0]).join('').toUpperCase();
   }, [displayName]);
-  const configSources = [apiProfile, apiProfile?.settings, apiProfile?.preferences, userConfig, userConfig?.settings, userConfig?.preferences]
-    .filter(Boolean);
+  const configSources = [
+    apiProfile,
+    apiProfile?.settings,
+    apiProfile?.preferences,
+    userConfig,
+    userConfig?.settings,
+    userConfig?.preferences,
+  ].filter(Boolean);
+
   const getConfigValue = (...keys) => {
     for (const source of configSources) {
       for (const key of keys) {
@@ -47,11 +60,38 @@ const ProfileScreen = ({ navigation }) => {
     }
     return '';
   };
+
   const apiKeyValue = getConfigValue('api_key', 'apiKey');
   const webhookUrlValue = getConfigValue('webhook_url', 'webhookUrl');
   const maskedApiKey = apiKeyValue
     ? `${apiKeyValue.slice(0, Math.min(8, apiKeyValue.length))}${apiKeyValue.length > 12 ? `••••${apiKeyValue.slice(-4)}` : ''}`
     : 'Not configured';
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchRegisteredDevices()
+      .then((nextDevices) => {
+        if (!cancelled) {
+          setDevices(nextDevices);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('[Profile] Device list fetch failed:', err.message);
+          setDevices([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDevicesLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const copyToClipboard = async () => {
     if (!apiKeyValue) {
@@ -94,6 +134,31 @@ const ProfileScreen = ({ navigation }) => {
       setCopyState('error');
       setCopyMessage(err?.message || 'Clipboard copy failed.');
     }
+  };
+
+  const handleRemoveDevice = (device) => {
+    Alert.alert(
+      'Remove device',
+      `Unregister ${device?.device_name || device?.platform || 'this device'}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setBusyDeviceId(device.id);
+            try {
+              await unregisterDevice(device.id);
+              setDevices((prev) => prev.filter((item) => item.id !== device.id));
+            } catch (err) {
+              Alert.alert('Unable to remove device', err?.message || 'Please try again.');
+            } finally {
+              setBusyDeviceId(null);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleSignOut = async () => {
@@ -174,7 +239,27 @@ const ProfileScreen = ({ navigation }) => {
           <Text style={styles.sectionHeader}>ACCOUNT</Text>
           <ChevronRow label="Change Password" />
           <ToggleRow label="Two-Factor Auth" initialValue />
-          <InfoRow label="Active Sessions" value="3 devices" />
+          <InfoRow
+            label="Active Sessions"
+            value={devicesLoading ? 'Loading…' : `${devices.length} device${devices.length === 1 ? '' : 's'}`}
+          />
+          {devicesLoading ? (
+            <ActivityIndicator color={colors.blue} style={styles.devicesLoader} />
+          ) : devices.length > 0 ? (
+            devices.map((device) => (
+              <View key={device.id} style={styles.deviceRow}>
+                <View style={styles.deviceCopy}>
+                  <Text style={styles.deviceName}>{device.device_name || 'Registered device'}</Text>
+                  <Text style={styles.deviceMeta}>{(device.platform || 'unknown').toUpperCase()}</Text>
+                </View>
+                <TouchableOpacity onPress={() => handleRemoveDevice(device)} disabled={busyDeviceId === device.id}>
+                  <Text style={styles.removeDeviceText}>{busyDeviceId === device.id ? '...' : 'Remove'}</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.emptyDevicesText}>No registered push devices found.</Text>
+          )}
           <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
             <Text style={styles.signOutText}>Sign Out</Text>
           </TouchableOpacity>
@@ -396,6 +481,40 @@ const styles = StyleSheet.create({
   },
   toggleTextActive: {
     color: colors.safe,
+  },
+  devicesLoader: {
+    paddingVertical: spacing.md,
+  },
+  deviceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  deviceCopy: {
+    flex: 1,
+  },
+  deviceName: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  deviceMeta: {
+    color: colors.textDim,
+    fontSize: 12,
+    marginTop: spacing.xs,
+  },
+  removeDeviceText: {
+    color: colors.critical,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  emptyDevicesText: {
+    color: colors.textDim,
+    fontSize: 12,
+    paddingVertical: spacing.md,
   },
   signOutButton: {
     paddingVertical: spacing.md,

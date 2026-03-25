@@ -751,17 +751,19 @@ export function useAOIs(enabled = true) {
       setAois([]);
       setLoading(false);
       setError(null);
-      return;
+      return { aois: [] };
     }
     setLoading(true);
     setError(null);
     try {
       const data = await fetchMyAOIs();
       setAois(data.aois || []);
+      return data;
     } catch (err) {
       console.warn('[useAOIs] API failed:', err.message);
       setError(err);
       setAois([]);
+      throw err;
     } finally {
       setLoading(false);
     }

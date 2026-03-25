@@ -47,8 +47,8 @@ export async function syncPushToken(pushToken) {
   try {
     await registerDevicePushToken({
       token: currentToken,
-      provider: 'expo',
       platform: Platform.OS,
+      device_name: `${Platform.OS === 'ios' ? 'iPhone' : Platform.OS === 'android' ? 'Android' : 'Web'} device`,
     });
   } catch (err) {
     if (err?.status === 404) {
