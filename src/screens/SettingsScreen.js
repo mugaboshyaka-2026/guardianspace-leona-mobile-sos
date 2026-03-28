@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import { AppContext } from '../../App';
-import { PRODUCT_CONFIGS, getProductConfig } from '../lib/products';
+import { getProductConfig } from '../lib/products';
 import { useAOIs } from '../hooks/useEvents';
 import {
   addAOI,
@@ -29,6 +29,7 @@ import { setCurrentDataPreferences } from '../lib/dataPreferences';
 import { clearOfflineDataset } from '../lib/offlineCache';
 import { getLocationMetadata } from '../lib/locality';
 import { AOI_PRESETS } from '../lib/aoiPresets';
+import { mergeStoredUserConfig } from '../lib/userConfigStore';
 
 const MAP_TYPE_OPTIONS = ['2D', '3D', 'Satellite'];
 const REFRESH_INTERVAL_OPTIONS = ['30s', '1m', '5m', '15m'];
@@ -61,7 +62,6 @@ function hasValidCoordinates(lat, lng) {
 const SettingsScreen = ({ navigation }) => {
   const { userConfig, setUserConfig } = useContext(AppContext);
   const productConfig = getProductConfig(userConfig?.product);
-  const plans = Object.values(PRODUCT_CONFIGS);
   const { aois, loading: aoisLoading, refresh: refreshAois } = useAOIs();
   const notifications = useMemo(
     () => userConfig?.pushNotifications ?? userConfig?.preferences?.push_notifications ?? true,
@@ -197,13 +197,6 @@ const SettingsScreen = ({ navigation }) => {
     }
   };
 
-  const handlePlanChange = (planId) => {
-    setUserConfig((prev) => ({
-      ...(prev || {}),
-      product: planId,
-    }));
-  };
-
   const handlePushNotificationsToggle = async (value) => {
     await persistServerNotificationPrefs(
       { push: value },
@@ -286,13 +279,23 @@ const SettingsScreen = ({ navigation }) => {
   const syncAoisIntoUserConfig = (nextAois) => {
     const names = nextAois.map((aoi) => formatAoiName(aoi)).filter(Boolean);
     const primaryAoi = nextAois.find((aoi) => aoi?.is_primary) || nextAois[0] || null;
+    const location = primaryAoi ? formatAoiName(primaryAoi) : userConfig?.location;
+    const radius = primaryAoi?.radius_km ?? userConfig?.radius ?? 0;
 
     setUserConfig((prev) => ({
       ...(prev || {}),
       aois: names,
-      location: primaryAoi ? formatAoiName(primaryAoi) : prev?.location,
-      radius: primaryAoi?.radius_km ?? prev?.radius ?? 0,
+      location,
+      radius,
     }));
+    mergeStoredUserConfig({
+      product: 'leona_sos',
+      location,
+      aois: names,
+      radius,
+    }).catch((err) => {
+      console.warn('[Settings] Local userConfig persist failed:', err.message);
+    });
   };
 
   const handleRefreshAois = async () => {
@@ -493,33 +496,19 @@ const SettingsScreen = ({ navigation }) => {
           <View style={styles.planCard}>
             <View style={styles.settingLabel}>
               <Text style={styles.settingText}>Current Plan</Text>
-              <Text style={styles.subtitle}>{productConfig.label} · Select a different plan below</Text>
+              <Text style={styles.subtitle}>{productConfig.label} · This build is fixed to the Leona SOS tier.</Text>
             </View>
             <View style={styles.planOptions}>
-              {plans.map((plan) => {
-                const isActive = plan.id === productConfig.id;
-                return (
-                  <TouchableOpacity
-                    key={plan.id}
-                    style={[
-                      styles.planPill,
-                      { borderColor: plan.accent },
-                      isActive && { backgroundColor: `${plan.accent}18` },
-                    ]}
-                    onPress={() => handlePlanChange(plan.id)}
-                    disabled={isActive}
-                  >
-                    <Text
-                      style={[
-                        styles.planPillText,
-                        { color: isActive ? plan.accent : colors.textSec },
-                      ]}
-                    >
-                      {plan.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+              <View
+                style={[
+                  styles.planPill,
+                  { borderColor: productConfig.accent, backgroundColor: `${productConfig.accent}18` },
+                ]}
+              >
+                <Text style={[styles.planPillText, { color: productConfig.accent }]}>
+                  {productConfig.label}
+                </Text>
+              </View>
             </View>
             <TouchableOpacity
               style={styles.planDetailRow}

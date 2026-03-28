@@ -13,6 +13,7 @@ import { syncPushToken } from './src/lib/pushRegistration';
 import { getStoredSettingsPreferences } from './src/lib/settingsPreferences';
 import { setCurrentDataPreferences } from './src/lib/dataPreferences';
 import { markAlertRead, normalizeAlertToEvent } from './src/lib/api';
+import { clearStoredUserConfig, getStoredUserConfig, mergeStoredUserConfig } from './src/lib/userConfigStore';
 
 // App context for onboarding completion
 export const AppContext = createContext();
@@ -29,6 +30,9 @@ export default function App() {
 
   const handleLogout = () => {
     resetEventCache();
+    clearStoredUserConfig().catch((err) => {
+      console.warn('[App] Stored userConfig clear failed:', err.message);
+    });
     setUserConfig(null);
     setOnboardingComplete(false);
   };
@@ -54,8 +58,44 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
   const [pendingNotificationResponse, setPendingNotificationResponse] = useState(null);
 
   useEffect(() => {
+    let cancelled = false;
+
+    getStoredUserConfig()
+      .then((storedConfig) => {
+        if (cancelled || !storedConfig || Object.keys(storedConfig).length === 0) {
+          return;
+        }
+
+        setUserConfig((prev) => ({
+          ...(storedConfig || {}),
+          ...(prev || {}),
+          product: 'leona_sos',
+        }));
+
+        const hasPersistedAois = Array.isArray(storedConfig?.aois) && storedConfig.aois.length > 0;
+        if (storedConfig?.authMode === 'guest' && hasPersistedAois) {
+          setOnboardingComplete(true);
+        }
+      })
+      .catch((err) => {
+        console.warn('[App] Stored userConfig read failed:', err.message);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setOnboardingComplete, setUserConfig]);
+
+  useEffect(() => {
     if (isSignedIn) {
-      setOnboardingComplete(false);
+      getStoredUserConfig()
+        .then((storedConfig) => {
+          const hasPersistedAois = Array.isArray(storedConfig?.aois) && storedConfig.aois.length > 0;
+          setOnboardingComplete(hasPersistedAois);
+        })
+        .catch(() => {
+          setOnboardingComplete(false);
+        });
     }
   }, [isSignedIn, setOnboardingComplete]);
 
@@ -165,14 +205,21 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         console.warn('[App] Local settings preference read failed:', err.message);
         return {};
       });
+      const localUserConfig = await getStoredUserConfig().catch((err) => {
+        console.warn('[App] Local userConfig read failed:', err.message);
+        return {};
+      });
       const persistedEventTypes = Array.isArray(profile?.preferences?.event_types)
         ? profile.preferences.event_types
         : Array.isArray(profile?.preferences?.eventTypes)
           ? profile.preferences.eventTypes
-          : [];
+          : Array.isArray(localUserConfig?.eventTypes)
+            ? localUserConfig.eventTypes
+            : [];
       const persistedRadius = profile?.preferences?.radius_km
         ?? profile?.preferences?.radiusKm
         ?? aois.find((aoi) => Number(aoi?.radius_km))?.radius_km
+        ?? localUserConfig?.radius
         ?? userConfig?.radius
         ?? 0;
       const persistedCriticalOnly = localPreferences?.critical_only
@@ -233,7 +280,14 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         offline_cache: Boolean(persistedOfflineCache),
         data_saver_mode: Boolean(persistedDataSaverMode),
       });
-      const persistedAois = aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean);
+      const persistedAois = aois.length > 0
+        ? aois.map((aoi) => aoi?.name || aoi?.location_name || aoi?.location).filter(Boolean)
+        : Array.isArray(localUserConfig?.aois)
+          ? localUserConfig.aois.filter(Boolean)
+          : [];
+      const hydratedLocation = persistedAois.includes(localUserConfig?.location)
+        ? localUserConfig.location
+        : persistedAois[0];
 
       if (!persistedAois.length) {
         console.log('[App] userConfig hydrate skipped: no AOIs available');
@@ -245,6 +299,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         persistedRadius,
         persistedAois,
         localPreferences,
+        localUserConfig,
         profilePreferences: profile?.preferences || null,
       });
 
@@ -254,7 +309,9 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
 
       setUserConfig((prev) => ({
         ...(prev || {}),
-        location: prev?.location || persistedAois[0],
+        authMode: prev?.authMode || localUserConfig?.authMode || 'signin',
+        product: 'leona_sos',
+        location: hydratedLocation,
         aois: persistedAois,
         radius: Number(persistedRadius) || 0,
         eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (prev?.eventTypes || []),
@@ -282,8 +339,20 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
           data_saver_mode: Boolean(persistedDataSaverMode),
         },
       }));
+      setOnboardingComplete(true);
+      mergeStoredUserConfig({
+        authMode: userConfig?.authMode || localUserConfig?.authMode || 'signin',
+        product: 'leona_sos',
+        location: hydratedLocation,
+        aois: persistedAois,
+        radius: Number(persistedRadius) || 0,
+        eventTypes: persistedEventTypes,
+      }).catch((err) => {
+        console.warn('[App] Stored userConfig persist failed:', err.message);
+      });
       console.log('[App] userConfig hydrated', {
-        location: persistedAois[0],
+        product: 'leona_sos',
+        location: hydratedLocation,
         aois: persistedAois,
         radius: Number(persistedRadius) || 0,
         eventTypes: persistedEventTypes.length > 0 ? persistedEventTypes : (userConfig?.eventTypes || []),

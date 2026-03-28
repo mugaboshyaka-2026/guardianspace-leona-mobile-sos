@@ -1,4 +1,14 @@
 export const PRODUCT_CONFIGS = {
+  leona_sos: {
+    id: 'leona_sos',
+    label: 'Leona SOS',
+    description: 'Dedicated SOS monitoring with core hazard intelligence and guided response',
+    accent: '#00A8FF',
+    maxVisibleEvents: 25,
+    canUseCommunity: false,
+    canUseVideoAgent: false,
+    enabledMapLayers: ['wildfire', 'flood', 'earthquake', 'hurricane'],
+  },
   leona_plus: {
     id: 'leona_plus',
     label: 'Leona Plus',
@@ -32,7 +42,7 @@ export const PRODUCT_CONFIGS = {
 };
 
 export function getProductConfig(productId) {
-  return PRODUCT_CONFIGS[productId] || PRODUCT_CONFIGS.leona_plus;
+  return PRODUCT_CONFIGS[productId] || PRODUCT_CONFIGS.leona_sos;
 }
 
 export function limitEventsForProduct(events = [], productId) {

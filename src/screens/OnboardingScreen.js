@@ -20,8 +20,9 @@ import { AppContext } from '../../App';
 import { addAOI, fetchMyAOIs, updateUserProfile } from '../lib/api';
 import { resetEventCache } from '../hooks/useEvents';
 import { getLocationMetadata } from '../lib/locality';
-import { PRODUCT_CONFIGS } from '../lib/products';
+import { getProductConfig } from '../lib/products';
 import { AOI_PRESETS } from '../lib/aoiPresets';
+import { mergeStoredUserConfig } from '../lib/userConfigStore';
 
 const leonaAvatar = require('../assets/leona-avatar.png');
 const leonaBadge = require('../assets/leona-badge.png');
@@ -30,11 +31,15 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const WELCOME_LOGO_SIZE = Math.min(SCREEN_HEIGHT * 0.48, 280);
 const AUTH_KEYBOARD_BEHAVIOR = Platform.OS === 'ios' ? 'padding' : undefined;
 
-const PRODUCTS = [
-  { id: 'leona_plus', label: PRODUCT_CONFIGS.leona_plus.label, desc: PRODUCT_CONFIGS.leona_plus.description, icon: 'LP', accent: PRODUCT_CONFIGS.leona_plus.accent },
-  { id: 'leona_pro', label: PRODUCT_CONFIGS.leona_pro.label, desc: PRODUCT_CONFIGS.leona_pro.description, icon: 'PR', accent: PRODUCT_CONFIGS.leona_pro.accent },
-  { id: 'leona_enterprise', label: PRODUCT_CONFIGS.leona_enterprise.label, desc: PRODUCT_CONFIGS.leona_enterprise.description, icon: 'EN', accent: PRODUCT_CONFIGS.leona_enterprise.accent },
-];
+const FIXED_PRODUCT_ID = 'leona_sos';
+const AUSTRALIA_PRESET = AOI_PRESETS.find((preset) => preset.name === 'Australia') || AOI_PRESETS[0];
+const AUSTRALIA_DEFAULT_AOI = {
+  name: AUSTRALIA_PRESET?.name || 'Australia',
+  city: 'Australia',
+  country_code: 'AU',
+  lat: AUSTRALIA_PRESET?.lat ?? -25.2744,
+  lng: AUSTRALIA_PRESET?.lng ?? 133.7751,
+};
 
 const EVENT_TYPE_OPTIONS = [
   { key: 'wildfire', label: 'Wildfires' },
@@ -64,11 +69,11 @@ export default function OnboardingScreen() {
   const [verificationMode, setVerificationMode] = useState(null);
   const [secondFactorStrategy, setSecondFactorStrategy] = useState(null);
   const [submittingAuth, setSubmittingAuth] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState('leona_plus');
-  const [location, setLocation] = useState('');
-  const [locationLat, setLocationLat] = useState('');
-  const [locationLng, setLocationLng] = useState('');
-  const [selectedAois, setSelectedAois] = useState([]);
+  const selectedProduct = FIXED_PRODUCT_ID;
+  const [location, setLocation] = useState(AUSTRALIA_DEFAULT_AOI.name);
+  const [locationLat, setLocationLat] = useState(String(AUSTRALIA_DEFAULT_AOI.lat));
+  const [locationLng, setLocationLng] = useState(String(AUSTRALIA_DEFAULT_AOI.lng));
+  const [selectedAois, setSelectedAois] = useState([AUSTRALIA_DEFAULT_AOI]);
   const [existingAois, setExistingAois] = useState([]);
   const [loadingExistingAois, setLoadingExistingAois] = useState(false);
   const [selectedRadius, setSelectedRadius] = useState(50);
@@ -143,7 +148,8 @@ export default function OnboardingScreen() {
     };
   }, [authLoaded, isSignedIn]);
 
-  const productLabel = PRODUCTS.find((p) => p.id === selectedProduct)?.label || 'LEONA';
+  const productConfig = getProductConfig(selectedProduct);
+  const productLabel = productConfig.label;
   const selectedAoiNames = useMemo(
     () => selectedAois.map((item) => item.name).filter(Boolean),
     [selectedAois]
@@ -497,7 +503,7 @@ export default function OnboardingScreen() {
     setStep(2);
   };
 
-  const toggleAoi = (value) => {
+  const toggleAoi = () => {
     const draftAoi = buildDraftAoi();
     if (!draftAoi) {
       setLocationError('Enter an AOI name plus latitude and longitude before adding it.');
@@ -508,7 +514,7 @@ export default function OnboardingScreen() {
 
     setSelectedAois((prev) => (
       prev.some((item) => item.name === draftAoi.name)
-        ? prev.filter((item) => item.name !== draftAoi.name)
+        ? prev
         : [...prev, draftAoi]
     ));
     setLocation('');
@@ -533,7 +539,7 @@ export default function OnboardingScreen() {
     ));
   };
 
-  const createAoiWithFallback = async (aoi) => {
+  const createAoiWithFallback = async (aoi, isPrimary = false) => {
     const payload = {
       name: aoi.name,
       city: aoi.city,
@@ -541,7 +547,7 @@ export default function OnboardingScreen() {
       lat: aoi.lat,
       lng: aoi.lng,
       radius_km: selectedRadius,
-      is_primary: false,
+      is_primary: isPrimary,
     };
 
     console.log('[AOI_SETUP] Attempting AOI create', {
@@ -618,8 +624,8 @@ export default function OnboardingScreen() {
             selectedRadius,
             aoisToCreate: aoisToCreate.map((item) => item.name),
           });
-          for (const aoi of aoisToCreate) {
-            await createAoiWithFallback(aoi);
+          for (const [index, aoi] of aoisToCreate.entries()) {
+            await createAoiWithFallback(aoi, existingAois.length === 0 && index === 0);
           }
           resetEventCache();
           setExistingAois((prev) => Array.from(new Set([...prev, ...aoisToCreate.map((item) => item.name)])));
@@ -632,6 +638,17 @@ export default function OnboardingScreen() {
             event_types: selectedEventTypes,
             radius_km: selectedRadius,
           },
+        });
+        await mergeStoredUserConfig({
+          authMode,
+          email,
+          fullName,
+          organization,
+          product: selectedProduct,
+          location: normalizedAois[0] || location,
+          aois: normalizedAois,
+          radius: selectedRadius,
+          eventTypes: selectedEventTypes,
         });
         console.log('[AOI_SETUP] Preferences persisted', {
           eventTypes: selectedEventTypes,
@@ -651,7 +668,7 @@ export default function OnboardingScreen() {
       }
     }
 
-    handleOnboardingComplete({
+    const onboardingConfig = {
       authMode,
       email,
       fullName,
@@ -661,7 +678,12 @@ export default function OnboardingScreen() {
       aois: normalizedAois,
       radius: selectedRadius,
       eventTypes: selectedEventTypes,
+    };
+
+    await mergeStoredUserConfig(onboardingConfig).catch((err) => {
+      console.warn('[Onboarding] Local config persist failed:', err.message);
     });
+    handleOnboardingComplete(onboardingConfig);
   };
 
   return (
@@ -708,13 +730,6 @@ export default function OnboardingScreen() {
         />
       )}
       {step === 2 && (
-        <StepProductSelect
-          selectedProduct={selectedProduct}
-          setSelectedProduct={setSelectedProduct}
-          onNext={() => setStep(3)}
-        />
-      )}
-      {step === 3 && (
         <StepAoiSetup
           location={location}
           setLocation={setLocation}
@@ -731,6 +746,7 @@ export default function OnboardingScreen() {
           presets={AOI_PRESETS}
           suggestions={allSuggestedAois}
           existingAois={existingAois}
+          defaultAoiLabel={AUSTRALIA_DEFAULT_AOI.name}
           selectedRadius={selectedRadius}
           setSelectedRadius={setSelectedRadius}
           selectedEventTypes={selectedEventTypes}
@@ -991,53 +1007,6 @@ const StepVerifyEmail = ({ title, subtitle, buttonLabel, verificationCode, setVe
   </KeyboardAvoidingView>
 );
 
-const StepProductSelect = ({ selectedProduct, setSelectedProduct, onNext }) => (
-  <ScrollView contentContainerStyle={styles.stepContainer}>
-    <ProgressBar count={3} filled={1} />
-
-    <Text style={styles.stepTitle}>How will you use LEONA?</Text>
-    <Text style={styles.stepSubtitle}>
-      Select your profile and LEONA will configure the right tools, layers, and intelligence for you.
-    </Text>
-
-    {PRODUCTS.map((product) => (
-      <TouchableOpacity
-        key={product.id}
-        style={[
-          styles.productCard,
-          selectedProduct === product.id && {
-            borderColor: product.accent,
-            backgroundColor: `${product.accent}10`,
-          },
-        ]}
-        onPress={() => setSelectedProduct(product.id)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.productRow}>
-          <View style={[styles.productIcon, { borderColor: product.accent }]}>
-            <Text style={[styles.productIconText, { color: product.accent }]}>{product.icon}</Text>
-          </View>
-          <View style={styles.productInfo}>
-            <Text style={[styles.productLabel, selectedProduct === product.id && { color: product.accent }]}>
-              {product.label}
-            </Text>
-            <Text style={styles.productDesc}>{product.desc}</Text>
-          </View>
-          {selectedProduct === product.id && (
-            <View style={[styles.productCheck, { backgroundColor: product.accent }]}>
-              <Text style={styles.productCheckText}>OK</Text>
-            </View>
-          )}
-        </View>
-      </TouchableOpacity>
-    ))}
-
-    <TouchableOpacity style={styles.buttonPrimary} onPress={onNext}>
-      <Text style={styles.buttonTextPrimary}>NEXT -></Text>
-    </TouchableOpacity>
-  </ScrollView>
-);
-
 const StepAoiSetup = ({
   location,
   setLocation,
@@ -1054,6 +1023,7 @@ const StepAoiSetup = ({
   presets,
   suggestions,
   existingAois,
+  defaultAoiLabel,
   selectedRadius,
   setSelectedRadius,
   selectedEventTypes,
@@ -1062,10 +1032,10 @@ const StepAoiSetup = ({
   loadingExistingAois,
 }) => (
   <ScrollView contentContainerStyle={styles.stepContainer}>
-    <ProgressBar count={3} filled={2} />
+    <ProgressBar count={2} filled={1} />
 
     <Text style={styles.stepTitle}>Set your AOIs</Text>
-    <Text style={styles.stepSubtitle}>Choose the places LEONA should monitor first. This setup is written to your account, not just the device.</Text>
+    <Text style={styles.stepSubtitle}>Choose the places LEONA should monitor first. {defaultAoiLabel} is preselected and this setup is written to your account and stored on this device.</Text>
 
     <View style={styles.searchContainer}>
       <TextInput
@@ -1194,12 +1164,12 @@ const StepAoiSetup = ({
 );
 
 const StepReady = ({ location, radius, aois, eventTypes, product, productLabel, eventTypeError, onComplete, pulseAnim, submitting }) => {
-  const productData = PRODUCTS.find((p) => p.id === product);
+  const productData = getProductConfig(product);
   const isEventTypeSelectionEmpty = !eventTypes || eventTypes.length === 0;
 
   return (
     <ScrollView contentContainerStyle={styles.stepContainer}>
-      <ProgressBar count={3} filled={3} />
+      <ProgressBar count={2} filled={2} />
 
       <Animated.View style={[styles.avatarContainer, { transform: [{ scale: pulseAnim }] }]}>
         <Image source={leonaAvatar} style={styles.avatarImage} />

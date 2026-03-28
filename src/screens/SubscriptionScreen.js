@@ -1,4 +1,4 @@
-import React, { useContext, useMemo } from 'react';
+import React, { useContext } from 'react';
 import {
   View,
   Text,
@@ -9,43 +9,16 @@ import {
 } from 'react-native';
 import { colors, spacing } from '../theme';
 import { AppContext } from '../../App';
-import { PRODUCT_CONFIGS, getProductConfig } from '../lib/products';
+import { getProductConfig } from '../lib/products';
 
 const SubscriptionScreen = ({ navigation }) => {
-  const { userConfig, setUserConfig } = useContext(AppContext);
+  const { userConfig } = useContext(AppContext);
   const currentPlan = getProductConfig(userConfig?.product);
-  const plans = useMemo(
-    () => [
-      {
-        ...PRODUCT_CONFIGS.leona_plus,
-        price: 'Free',
-        features: ['25 visible events', 'Individual monitoring', 'Core hazard layers', 'Chat + briefs'],
-      },
-      {
-        ...PRODUCT_CONFIGS.leona_pro,
-        price: '$49/mo',
-        features: ['75 visible events', 'Community feed', 'Video agent access', 'Expanded map layers'],
-      },
-      {
-        ...PRODUCT_CONFIGS.leona_enterprise,
-        price: 'Custom',
-        features: ['Unlimited events', 'Full map coverage', 'Video + community', 'Operational team scale'],
-      },
-    ],
-    []
-  );
   const invoices = [
     { month: 'Mar 2026', amount: 2400, date: 'March 1, 2026' },
     { month: 'Feb 2026', amount: 2400, date: 'February 1, 2026' },
     { month: 'Jan 2026', amount: 2400, date: 'January 1, 2026' },
   ];
-
-  const handlePlanSelect = (planId) => {
-    setUserConfig((prev) => ({
-      ...(prev || {}),
-      product: planId,
-    }));
-  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -80,20 +53,21 @@ const SubscriptionScreen = ({ navigation }) => {
         </View>
 
         <View style={styles.planComparisonSection}>
-          <Text style={styles.sectionHeader}>PLAN COMPARISON</Text>
-          {plans.map((plan) => (
-            <PlanCard
-              key={plan.id}
-              name={plan.label.toUpperCase()}
-              price={plan.price}
-              badge={plan.id === currentPlan.id ? 'CURRENT' : 'SWITCH'}
-              features={plan.features}
-              borderColor={plan.accent}
-              backgroundColor={colors.panel}
-              isCurrent={plan.id === currentPlan.id}
-              onPress={() => handlePlanSelect(plan.id)}
-            />
-          ))}
+          <Text style={styles.sectionHeader}>PLAN DETAILS</Text>
+          <PlanCard
+            name={currentPlan.label.toUpperCase()}
+            price="Managed"
+            badge="CURRENT"
+            features={[
+              'Fixed tier for this mobile build',
+              'Core hazard monitoring and LEONA guidance',
+              'AOI configuration stored on device and account',
+              'Plan switching is disabled in-app',
+            ]}
+            borderColor={currentPlan.accent}
+            backgroundColor={colors.panel}
+            isCurrent
+          />
         </View>
 
         <View style={styles.billingHistorySection}>
