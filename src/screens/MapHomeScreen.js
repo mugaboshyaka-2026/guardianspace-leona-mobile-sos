@@ -30,10 +30,17 @@ const mapsModule = Platform.OS === 'web'
 
 const MapView = mapsModule.default;
 const Marker = mapsModule.Marker;
+const GOOGLE_PROVIDER = mapsModule.PROVIDER_GOOGLE;
 
 const LOCAL_REGION = { latitude: -33.8688, longitude: 151.2093, latitudeDelta: 8, longitudeDelta: 8 };
 const GLOBAL_REGION = { latitude: 25, longitude: 10, latitudeDelta: 80, longitudeDelta: 80 };
 const MAP_MODE_OPTIONS = ['2D', '3D', 'Satellite'];
+
+function getNativeMapType(mode) {
+  if (mode === '3D') return 'hybrid';
+  if (mode === 'Satellite') return 'satellite';
+  return 'standard';
+}
 
 const layers = [
   { key: 'wildfire', label: 'Wildfires', icon: 'F' },
@@ -363,8 +370,8 @@ const MapHomeScreen = ({ navigation }) => {
       <MapView
         ref={mapRef}
         style={styles.map}
-        mapType={Platform.OS === 'web' ? undefined : mapMode === '3D' ? 'hybridFlyover' : mapMode === 'Satellite' ? 'satellite' : 'mutedStandard'}
-        userInterfaceStyle={Platform.OS === 'web' ? undefined : 'dark'}
+        provider={Platform.OS === 'web' ? undefined : GOOGLE_PROVIDER}
+        mapType={Platform.OS === 'web' ? undefined : getNativeMapType(mapMode)}
         initialRegion={LOCAL_REGION}
         pitchEnabled={Platform.OS !== 'web' && mapMode === '3D'}
         rotateEnabled={Platform.OS !== 'web' && mapMode === '3D'}

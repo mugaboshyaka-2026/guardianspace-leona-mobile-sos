@@ -27,6 +27,8 @@ const leonaAvatar = require('../assets/leona-avatar.png');
 const leonaBadge = require('../assets/leona-badge.png');
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const WELCOME_LOGO_SIZE = Math.min(SCREEN_HEIGHT * 0.48, 280);
+const AUTH_KEYBOARD_BEHAVIOR = Platform.OS === 'ios' ? 'padding' : undefined;
 
 const PRODUCTS = [
   { id: 'leona_plus', label: PRODUCT_CONFIGS.leona_plus.label, desc: PRODUCT_CONFIGS.leona_plus.description, icon: 'LP', accent: PRODUCT_CONFIGS.leona_plus.accent },
@@ -150,15 +152,27 @@ export default function OnboardingScreen() {
 
   const normalizeAoiInput = useCallback((value) => value.trim(), []);
   const parseCoordinate = useCallback((value) => {
-    const next = Number(value);
+    const normalized = String(value ?? '').trim();
+    if (!normalized) {
+      return null;
+    }
+    const next = Number(normalized);
     return Number.isFinite(next) ? next : null;
   }, []);
+  const hasValidCoordinates = useCallback((lat, lng) => (
+    lat !== null
+    && lng !== null
+    && lat >= -90
+    && lat <= 90
+    && lng >= -180
+    && lng <= 180
+  ), []);
   const buildDraftAoi = useCallback(() => {
     const normalized = normalizeAoiInput(location);
     const lat = parseCoordinate(locationLat);
     const lng = parseCoordinate(locationLng);
 
-    if (!normalized || lat === null || lng === null) {
+    if (!normalized || !hasValidCoordinates(lat, lng)) {
       return null;
     }
 
@@ -170,18 +184,23 @@ export default function OnboardingScreen() {
       lat,
       lng,
     };
-  }, [location, locationLat, locationLng, normalizeAoiInput, parseCoordinate]);
+  }, [hasValidCoordinates, location, locationLat, locationLng, normalizeAoiInput, parseCoordinate]);
 
   const getLocationValidationMessage = useCallback((value, latValue, lngValue) => {
     const normalized = normalizeAoiInput(value);
+    const lat = parseCoordinate(latValue);
+    const lng = parseCoordinate(lngValue);
     if (!normalized) {
       return 'Enter an AOI name before continuing.';
     }
-    if (parseCoordinate(latValue) === null || parseCoordinate(lngValue) === null) {
+    if (lat === null || lng === null) {
       return 'Enter latitude and longitude values for this AOI.';
     }
+    if (!hasValidCoordinates(lat, lng)) {
+      return 'Latitude must be between -90 and 90, and longitude must be between -180 and 180.';
+    }
     return '';
-  }, [normalizeAoiInput, parseCoordinate]);
+  }, [hasValidCoordinates, normalizeAoiInput, parseCoordinate]);
 
   const showClerkError = (error, fallbackMessage) => {
     const firstError = error?.errors?.[0];
@@ -793,16 +812,18 @@ const StepWelcome = ({ onSignIn, onCreateAccount, onGuest }) => (
 );
 
 const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRememberMe, onSubmit, onBack, submitting }) => {
+  const biometricLabel = Platform.OS === 'ios' ? 'Face ID' : 'biometric authentication';
+
   const handleFaceID = async () => {
     try {
       const compatible = await LocalAuthentication.hasHardwareAsync();
       if (!compatible) {
-        Alert.alert('Face ID unavailable', 'This device does not support biometric authentication.');
+        Alert.alert('Biometrics unavailable', 'This device does not support biometric authentication.');
         return;
       }
       const enrolled = await LocalAuthentication.isEnrolledAsync();
       if (!enrolled) {
-        Alert.alert('Face ID not set up', 'Please enable Face ID in your device settings first.');
+        Alert.alert('Biometrics not set up', 'Please enable biometric authentication in your device settings first.');
         return;
       }
       const result = await LocalAuthentication.authenticateAsync({
@@ -819,7 +840,7 @@ const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRem
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={AUTH_KEYBOARD_BEHAVIOR}>
       <ScrollView contentContainerStyle={styles.stepContainer}>
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
           <Text style={styles.backText}>{'<'} Back</Text>
@@ -833,7 +854,7 @@ const StepSignIn = ({ email, setEmail, password, setPassword, rememberMe, setRem
         <Text style={styles.stepSubtitle}>Sign in to your LEONA account</Text>
 
         <TouchableOpacity style={styles.faceIDBtn} onPress={handleFaceID} activeOpacity={0.75}>
-          <Text style={styles.faceIDText}>Sign in with Face ID</Text>
+          <Text style={styles.faceIDText}>{`Sign in with ${biometricLabel}`}</Text>
         </TouchableOpacity>
 
         <View style={styles.orDivider}>
@@ -894,7 +915,7 @@ const StepCreateAccount = ({
   onBack,
   submitting,
 }) => (
-  <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+  <KeyboardAvoidingView style={{ flex: 1 }} behavior={AUTH_KEYBOARD_BEHAVIOR}>
     <ScrollView contentContainerStyle={styles.stepContainer}>
       <TouchableOpacity onPress={onBack} style={styles.backButton}>
         <Text style={styles.backText}>{'<'} Back</Text>
@@ -942,7 +963,7 @@ const StepCreateAccount = ({
 );
 
 const StepVerifyEmail = ({ title, subtitle, buttonLabel, verificationCode, setVerificationCode, onSubmit, onBack, submitting }) => (
-  <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+  <KeyboardAvoidingView style={{ flex: 1 }} behavior={AUTH_KEYBOARD_BEHAVIOR}>
     <ScrollView contentContainerStyle={styles.stepContainer}>
       <TouchableOpacity onPress={onBack} style={styles.backButton}>
         <Text style={styles.backText}>{'<'} Back</Text>
@@ -1264,8 +1285,8 @@ const styles = StyleSheet.create({
     paddingTop: 52,
   },
   welcomeLogo: {
-    width: SCREEN_HEIGHT * 0.48,
-    height: SCREEN_HEIGHT * 0.48,
+    width: WELCOME_LOGO_SIZE,
+    height: WELCOME_LOGO_SIZE,
   },
   welcomeContent: {
     flex: 1,

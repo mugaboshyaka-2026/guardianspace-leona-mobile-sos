@@ -17,6 +17,11 @@ import { getRelatedNews, addFavorite, removeFavorite, checkFavorite, isTimeoutEr
 const mapsModule = Platform.OS === 'web' ? null : require('react-native-maps');
 const MapView = mapsModule?.default;
 const Marker = mapsModule?.Marker;
+const GOOGLE_PROVIDER = mapsModule?.PROVIDER_GOOGLE;
+
+function getInlineMapType(is3D) {
+  return is3D ? 'hybrid' : 'satellite';
+}
 
 const { width } = Dimensions.get('window');
 const severityRank = { critical: 4, high: 3, elevated: 2, monitoring: 1 };
@@ -310,7 +315,8 @@ const EventDetailScreen = ({ route, navigation }) => {
       ) : (
       <MapView
         style={styles.inlineMapView}
-        mapType={is3D ? 'hybridFlyover' : 'satellite'}
+        provider={GOOGLE_PROVIDER}
+        mapType={getInlineMapType(is3D)}
         initialRegion={{
           latitude: eventLat,
           longitude: eventLng,

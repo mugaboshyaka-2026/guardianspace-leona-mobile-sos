@@ -37,6 +37,27 @@ function formatAoiName(aoi) {
   return aoi?.name || aoi?.city || aoi?.location_name || aoi?.location || 'Unnamed AOI';
 }
 
+function parseCoordinateInput(value) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasValidCoordinates(lat, lng) {
+  return (
+    lat !== null
+    && lng !== null
+    && lat >= -90
+    && lat <= 90
+    && lng >= -180
+    && lng <= 180
+  );
+}
+
 const SettingsScreen = ({ navigation }) => {
   const { userConfig, setUserConfig } = useContext(AppContext);
   const productConfig = getProductConfig(userConfig?.product);
@@ -335,13 +356,18 @@ const SettingsScreen = ({ navigation }) => {
 
   const handleAddAoi = async () => {
     const location = aoiLocationInput.trim();
-    const lat = Number(aoiLatInput);
-    const lng = Number(aoiLngInput);
+    const lat = parseCoordinateInput(aoiLatInput);
+    const lng = parseCoordinateInput(aoiLngInput);
     const radiusKm = Math.max(10, Number(aoiRadiusInput) || 0);
     const metadata = getLocationMetadata(location);
 
-    if (!location || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-      Alert.alert('Coordinates required', 'Enter an AOI name plus valid latitude and longitude values from a backend-aligned source.');
+    if (!location || lat === null || lng === null) {
+      Alert.alert('Coordinates required', 'Enter an AOI name plus latitude and longitude values before saving.');
+      return;
+    }
+
+    if (!hasValidCoordinates(lat, lng)) {
+      Alert.alert('Coordinates invalid', 'Latitude must be between -90 and 90, and longitude must be between -180 and 180.');
       return;
     }
 
