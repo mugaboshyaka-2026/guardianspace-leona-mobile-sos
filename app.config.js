@@ -3,7 +3,7 @@ const path = require('path');
 
 const expoConfig = {
   name: 'LEONA',
-  slug: 'guardian-leona-sos',
+  slug: 'guardian-pro',
   version: '1.4.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
