@@ -219,7 +219,7 @@ export default function OnboardingScreen() {
     const trustLine = clientTrustState ? `Client trust state: ${clientTrustState}.` : '';
     Alert.alert(
       'Clerk configuration required',
-      `This mobile app is not yet allowed as an authorized client. ${statusLine} ${trustLine} Add "space.guardian.pro" to Clerk Authorized Parties, or relax the azp check for native clients, then try signing in again.`
+      `This mobile app is not yet allowed as an authorized client. ${statusLine} ${trustLine} Add "leona.sos.space.guardian" to Clerk Authorized Parties, or relax the azp check for native clients, then try signing in again.`
     );
   };
 

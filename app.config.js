@@ -16,7 +16,7 @@ const expoConfig = {
   },
   ios: {
     supportsTablet: true,
-    bundleIdentifier: 'space.guardian.leonasos',
+    bundleIdentifier: 'leona.sos.space.guardian',
     infoPlist: {
       NSLocationWhenInUseUsageDescription:
         'LEONA uses your location to provide personalised threat intelligence and alerts for your area.',
@@ -32,7 +32,7 @@ const expoConfig = {
     },
   },
   android: {
-    package: 'space.guardian.leonasos',
+    package: 'leona.sos.space.guardian',
     versionCode: 5,
     adaptiveIcon: {
       backgroundColor: '#04060F',
