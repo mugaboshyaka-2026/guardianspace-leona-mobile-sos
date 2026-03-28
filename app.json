@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "LEONA",
-    "slug": "guardian-pro",
+    "slug": "guardian-leona-sos",
     "version": "1.4.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,7 +14,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "space.guardian.pro",
+      "bundleIdentifier": "space.guardian.leonasos",
       "buildNumber": "6",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "LEONA uses your location to provide personalised threat intelligence and alerts for your area.",
@@ -35,7 +35,7 @@
       }
     },
     "android": {
-      "package": "space.guardian.pro",
+      "package": "space.guardian.leonasos",
       "versionCode": 5,
       "adaptiveIcon": {
         "backgroundColor": "#04060F",

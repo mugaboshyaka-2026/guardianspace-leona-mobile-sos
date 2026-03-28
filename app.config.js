@@ -3,7 +3,7 @@ const path = require('path');
 
 const expoConfig = {
   name: 'LEONA',
-  slug: 'guardian-pro',
+  slug: 'guardian-leona-sos',
   version: '1.4.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
@@ -16,7 +16,7 @@ const expoConfig = {
   },
   ios: {
     supportsTablet: true,
-    bundleIdentifier: 'space.guardian.pro',
+    bundleIdentifier: 'space.guardian.leonasos',
     infoPlist: {
       NSLocationWhenInUseUsageDescription:
         'LEONA uses your location to provide personalised threat intelligence and alerts for your area.',
@@ -32,7 +32,7 @@ const expoConfig = {
     },
   },
   android: {
-    package: 'space.guardian.pro',
+    package: 'space.guardian.leonasos',
     versionCode: 5,
     adaptiveIcon: {
       backgroundColor: '#04060F',
