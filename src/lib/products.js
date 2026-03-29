@@ -5,8 +5,8 @@ export const PRODUCT_CONFIGS = {
     description: 'Dedicated SOS monitoring with core hazard intelligence and guided response',
     accent: '#00A8FF',
     maxVisibleEvents: 25,
-    canUseCommunity: false,
-    canUseVideoAgent: false,
+    canUseCommunity: true,
+    canUseVideoAgent: true,
     enabledMapLayers: ['wildfire', 'flood', 'earthquake', 'hurricane'],
   },
   leona_plus: {
