@@ -33,10 +33,10 @@ export function normalizeAlertToEvent(alert = {}) {
     title: alert.event_title || alert.title || 'Alert',
     body: alert.body || '',
     description: alert.body || alert.description || '',
-    location: alert.location || '',
+    location: alert.matched_aoi_name || alert.location_name || alert.location || '',
     lat: Number.isNaN(lat) ? 0 : lat,
     lng: Number.isNaN(lng) ? 0 : lng,
-    severity: normalizeSeverity(alert.severity || 'high'),
+    severity: normalizeSeverity(alert.event_severity || alert.severity || 'high'),
     created_at: alert.created_at || alert.sent_at || new Date().toISOString(),
     updated_at: alert.sent_at || alert.updated_at || alert.created_at || new Date().toISOString(),
     source: alert.channel || alert.type || 'alert',
@@ -260,7 +260,10 @@ export async function sendLeonaMessage(messages) {
 }
 
 export async function getLeonaBrief(context) {
-  const data = await request('/api/leona/brief', { method: 'POST', body: { context } });
+  const body = typeof context === 'string'
+    ? { topic: context }
+    : (context && typeof context === 'object' ? context : {});
+  const data = await request('/api/leona/brief', { method: 'POST', body });
   return data;
 }
 
@@ -323,8 +326,8 @@ export async function fetchDataSources() {
 // so we fetch the event detail and extract the related_news array.
 
 export async function getRelatedNews(eventId) {
-  const data = await request(`/api/events/${eventId}`);
-  return { articles: data.related_news || [] };
+  const data = await request(`/api/events/${eventId}/related-news`);
+  return { articles: data?.articles || [] };
 }
 
 // ── AOIs ──

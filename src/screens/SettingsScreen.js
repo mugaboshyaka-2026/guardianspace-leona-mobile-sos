@@ -207,7 +207,7 @@ const SettingsScreen = ({ navigation }) => {
 
   const handleCriticalOnlyToggle = async (value) => {
     await persistServerNotificationPrefs(
-      { min_severity: value ? 'high' : 'monitoring' },
+      { min_severity: value ? 'critical' : 'monitoring' },
       { critical_only: value },
       { criticalOnly: value }
     ).catch(() => {});
