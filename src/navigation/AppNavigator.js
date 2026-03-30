@@ -18,6 +18,7 @@ import DataSourcesScreen from '../screens/DataSourcesScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SubscriptionScreen from '../screens/SubscriptionScreen';
 import CallScreen from '../screens/CallScreen';
+import { normalizeAlertToEvent } from '../lib/api';
 import { useAlerts, useMyEvents } from '../hooks/useEvents';
 import { useWorldEvents } from '../hooks/useEvents';
 import { AppContext } from '../../App';
@@ -182,7 +183,7 @@ export const AppNavigator = () => {
   const { isSignedIn, authReady } = useAuth();
   const productConfig = getProductConfig(userConfig?.product);
   const myDataAuthEnabled = isSignedIn && authReady;
-  const { meta: alertsMeta } = useAlerts(myDataAuthEnabled);
+  const { alerts } = useAlerts(myDataAuthEnabled);
   const { events: myEvents } = useMyEvents(myDataAuthEnabled);
   const { events: worldEvents } = useWorldEvents();
   const filteredMyEvents = useMemo(
@@ -192,16 +193,16 @@ export const AppNavigator = () => {
     ),
     [myEvents, userConfig]
   );
-  const badgeEvents = useMemo(
+  const unreadAlertsBadgeCount = useMemo(
     () => (
       userConfig?.criticalOnly
-        ? filteredMyEvents.filter((event) => event?.severity === 'critical')
-        : filteredMyEvents
+        ? (alerts || []).filter((alert) => !alert?.is_read && normalizeAlertToEvent(alert).severity === 'critical').length
+        : (alerts || []).filter((alert) => !alert?.is_read).length
     ),
-    [filteredMyEvents, userConfig?.criticalOnly]
+    [alerts, userConfig?.criticalOnly]
   );
   const alertsBadge = myDataAuthEnabled
-    ? (alertsMeta?.unread > 0 ? alertsMeta.unread : undefined)
+    ? (unreadAlertsBadgeCount > 0 ? unreadAlertsBadgeCount : undefined)
     : undefined;
 
   return (

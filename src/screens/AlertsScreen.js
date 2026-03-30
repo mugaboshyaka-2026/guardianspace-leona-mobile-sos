@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useContext } from 'react';
 import {
   View,
   StyleSheet,
@@ -14,6 +14,7 @@ import { isAccessDeniedError, useAlerts } from '../hooks/useEvents';
 import { fetchMyFavorites, markAlertRead, markAllAlertsRead, normalizeAlertToEvent } from '../lib/api';
 import LeonaHeader from '../components/LeonaHeader';
 import { useAuth } from '../lib/auth';
+import { AppContext } from '../../App';
 
 function getTimeSince(dateStr, now = Date.now()) {
   try {
@@ -43,34 +44,46 @@ function sortNewestFirst(items = []) {
 }
 
 const AlertsScreen = ({ navigation, route }) => {
+  const { userConfig } = useContext(AppContext);
   const { isLoaded: authLoaded, isSignedIn, authReady } = useAuth();
+  const myDataAuthEnabled = isSignedIn && authReady;
   const [activeTab, setActiveTab] = useState('MY');
   const [favorites, setFavorites] = useState([]);
   const [favLoading, setFavLoading] = useState(false);
   const [nowTs, setNowTs] = useState(Date.now());
   const {
     alerts,
-    meta,
     loading,
     error,
     refresh,
   } = useAlerts(myDataAuthEnabled);
 
-  const myDataAuthEnabled = isSignedIn && authReady;
   const myDataRequiresAuth = authLoaded && !myDataAuthEnabled;
   const alertsUnavailable = myDataRequiresAuth || isAccessDeniedError(error);
+  const criticalOnly = Boolean(
+    userConfig?.criticalOnly
+    ?? userConfig?.preferences?.critical_only
+  );
 
   const normalizedAlerts = useMemo(
     () => sortNewestFirst((alerts || []).map(normalizeAlertToEvent)),
     [alerts]
   );
+  const filteredAlerts = useMemo(
+    () => (
+      criticalOnly
+        ? normalizedAlerts.filter((alert) => alert?.severity === 'critical')
+        : normalizedAlerts
+    ),
+    [criticalOnly, normalizedAlerts]
+  );
   const unreadAlerts = useMemo(
-    () => normalizedAlerts.filter((alert) => !alert.is_read),
-    [normalizedAlerts]
+    () => filteredAlerts.filter((alert) => !alert.is_read),
+    [filteredAlerts]
   );
   const readAlerts = useMemo(
-    () => normalizedAlerts.filter((alert) => alert.is_read),
-    [normalizedAlerts]
+    () => filteredAlerts.filter((alert) => alert.is_read),
+    [filteredAlerts]
   );
   const activeAlerts = activeTab === 'MY' ? unreadAlerts : readAlerts;
 
@@ -211,7 +224,7 @@ const AlertsScreen = ({ navigation, route }) => {
   };
 
   const totalBadgeCount = activeTab === 'MY'
-    ? Number(meta?.unread || 0)
+    ? unreadAlerts.length
     : activeTab === 'ARCHIVE'
       ? readAlerts.length
       : favorites.length;
@@ -246,9 +259,9 @@ const AlertsScreen = ({ navigation, route }) => {
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {activeTab === 'MY' && Number(meta?.unread || 0) > 0 && (
+        {activeTab === 'MY' && unreadAlerts.length > 0 && (
           <View style={styles.markAllRow}>
-            <Text style={styles.markAllCopy}>{meta.unread} unread notifications</Text>
+            <Text style={styles.markAllCopy}>{unreadAlerts.length} unread notifications</Text>
             <TouchableOpacity
               style={styles.markAllButton}
               onPress={async () => {

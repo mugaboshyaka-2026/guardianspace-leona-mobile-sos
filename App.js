@@ -56,6 +56,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
   const { aois, loading: aoisLoading } = useAOIs(isSignedIn && authReady);
   const { profile, loading: profileLoading } = useProfile(isSignedIn && authReady);
   const [pendingNotificationResponse, setPendingNotificationResponse] = useState(null);
+  const [startupHydrated, setStartupHydrated] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,12 +74,17 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
         }));
 
         const hasPersistedAois = Array.isArray(storedConfig?.aois) && storedConfig.aois.length > 0;
-        if (storedConfig?.authMode === 'guest' && hasPersistedAois) {
+        if (hasPersistedAois) {
           setOnboardingComplete(true);
         }
       })
       .catch((err) => {
         console.warn('[App] Stored userConfig read failed:', err.message);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setStartupHydrated(true);
+        }
       });
 
     return () => {
@@ -87,17 +93,21 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
   }, [setOnboardingComplete, setUserConfig]);
 
   useEffect(() => {
-    if (isSignedIn) {
-      getStoredUserConfig()
-        .then((storedConfig) => {
-          const hasPersistedAois = Array.isArray(storedConfig?.aois) && storedConfig.aois.length > 0;
-          setOnboardingComplete(hasPersistedAois);
-        })
-        .catch(() => {
-          setOnboardingComplete(false);
-        });
+    if (!isLoaded) {
+      return;
     }
-  }, [isSignedIn, setOnboardingComplete]);
+
+    getStoredUserConfig()
+      .then((storedConfig) => {
+        const hasPersistedAois = Array.isArray(storedConfig?.aois) && storedConfig.aois.length > 0;
+        const guestResume = storedConfig?.authMode === 'guest' && hasPersistedAois;
+        const signedInResume = isSignedIn && hasPersistedAois;
+        setOnboardingComplete(guestResume || signedInResume);
+      })
+      .catch(() => {
+        setOnboardingComplete(false);
+      });
+  }, [isLoaded, isSignedIn, setOnboardingComplete]);
 
   const buildEventFromNotificationResponse = React.useCallback((response) => {
     const content = response?.notification?.request?.content || {};
@@ -434,7 +444,7 @@ function AppShell({ onboardingComplete, setOnboardingComplete, userConfig, setUs
     };
   }, [handleNotificationOpen, isSignedIn, pushNotificationsEnabled]);
 
-  if (!isLoaded || (isSignedIn && authReady && (aoisLoading || profileLoading))) {
+  if (!startupHydrated || !isLoaded || (isSignedIn && authReady && (aoisLoading || profileLoading))) {
     return <BrandedLoader />;
   }
 
